@@ -102,10 +102,25 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
     def test_release_dispatch_is_sentinel_scoped(self) -> None:
         body = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("repositories: sentinel", body)
-        self.assertIn("repos/jvallery/sentinel/dispatches", body)
-        self.assertIn('event_type:"frigate-release"', body)
+        self.assertIn("permission-actions: write", body)
+        self.assertIn("permission-contents: read", body)
+        self.assertIn("/installation/repositories", body)
+        self.assertIn('test "${repositories}" = "jvallery/sentinel"', body)
+        self.assertIn(
+            "repos/jvallery/sentinel/actions/workflows/frigate-promotion.yml/dispatches",
+            body,
+        )
+        self.assertNotIn("repos/jvallery/sentinel/dispatches", body)
+        self.assertNotIn('event_type:"frigate-release"', body)
         self.assertNotIn("KUBECONFIG", body)
         self.assertNotIn("kubectl", body)
+
+    def test_failed_dispatch_can_reuse_only_byte_identical_release_assets(self) -> None:
+        body = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("reusing exact immutable release assets", body)
+        self.assertIn('test "${actual}" = "${expected}"', body)
+        self.assertIn('cmp "release-evidence/${name}"', body)
+        self.assertNotIn("--clobber", body)
 
     def test_release_ids_are_immutable_before_build_or_asset_publication(self) -> None:
         body = RELEASE_WORKFLOW.read_text(encoding="utf-8")

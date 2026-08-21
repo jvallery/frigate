@@ -106,6 +106,28 @@ jobs:
           test "$(jq -er '.artifacts["tensorrt-amd64"].digest' release-evidence/release-manifest.json)" = "${TENSORRT_DIGEST}"
           test "$(jq -er .promotion.cluster_mutated_by_build release-evidence/release-manifest.json)" = "false"
 
+      - name: Mint and prove the Sentinel-only workflow-dispatch token
+        id: sentinel-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SENTINEL_PROMOTION_APP_ID }}
+          private-key: ${{ secrets.SENTINEL_PROMOTION_APP_PRIVATE_KEY }}
+          owner: jvallery
+          repositories: sentinel
+          permission-actions: write
+          permission-contents: read
+
+      - name: Prove exact Sentinel installation and active workflow
+        env:
+          GH_TOKEN: ${{ steps.sentinel-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          repositories="$(gh api /installation/repositories --paginate \
+            --jq '[.repositories[].full_name] | sort | join(",")')"
+          test "${repositories}" = "jvallery/sentinel"
+          test "$(gh api repos/jvallery/sentinel/actions/workflows/frigate-promotion.yml \
+            --jq .state)" = "active"
+
       - name: Create or verify the annotated release tag
         run: |
           set -euo pipefail
@@ -129,22 +151,24 @@ jobs:
           set -euo pipefail
           notes="Source: ${SOURCE_SHA}\nUpstream: ${UPSTREAM_SHA}\nTensorRT: ghcr.io/jvallery/frigate@${TENSORRT_DIGEST}\nZot: registry.vallery.net/jvallery/frigate@${TENSORRT_DIGEST}\nBuild: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           if gh release view "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "::error::release ${RELEASE_ID} appeared after preflight"
-            exit 42
+            test "$(gh release view "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" \
+              --json tagName,isDraft,isPrerelease \
+              --jq '[.tagName,(.isDraft|tostring),(.isPrerelease|tostring)] | join("/")')" \
+              = "${RELEASE_ID}/false/false"
+            mkdir -p "${RUNNER_TEMP}/existing-release"
+            gh release download "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" \
+              --dir "${RUNNER_TEMP}/existing-release"
+            expected="$(find release-evidence -maxdepth 1 -type f -printf '%f\n' | sort)"
+            actual="$(find "${RUNNER_TEMP}/existing-release" -maxdepth 1 -type f -printf '%f\n' | sort)"
+            test "${actual}" = "${expected}"
+            while IFS= read -r name; do
+              cmp "release-evidence/${name}" "${RUNNER_TEMP}/existing-release/${name}"
+            done <<<"${expected}"
+            echo "reusing exact immutable release assets after a failed dispatch attempt"
+          else
+            gh release create "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
+              --title "Frigate ${RELEASE_ID}" --notes "${notes}" release-evidence/*
           fi
-          gh release create "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
-            --title "Frigate ${RELEASE_ID}" --notes "${notes}" release-evidence/*
-
-      - name: Mint a Sentinel-only dispatch token
-        id: sentinel-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.SENTINEL_PROMOTION_APP_ID }}
-          private-key: ${{ secrets.SENTINEL_PROMOTION_APP_PRIVATE_KEY }}
-          owner: jvallery
-          repositories: sentinel
-          permission-actions: write
-          permission-contents: read
 
       - name: Dispatch the verified release to Sentinel
         env:
@@ -152,6 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           payload="$(jq -nc \
+            --arg ref "main" \
             --arg release_id "${RELEASE_ID}" \
             --arg source_sha "${SOURCE_SHA}" \
             --arg upstream_sha "${UPSTREAM_SHA}" \
@@ -160,5 +185,7 @@ jobs:
             --arg manifest_sha256 "${MANIFEST_SHA256}" \
             --arg manifest_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_ID}/release-manifest.json" \
             --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            '{event_type:"frigate-release",client_payload:{release_id:$release_id,source_sha:$source_sha,upstream_sha:$upstream_sha,standard_digest:$standard_digest,tensorrt_digest:$tensorrt_digest,manifest_sha256:$manifest_sha256,manifest_url:$manifest_url,run_url:$run_url}}')"
-          GH_TOKEN="${SENTINEL_TOKEN}" gh api --method POST repos/jvallery/sentinel/dispatches --input - <<<"${payload}"
+            '{ref:$ref,inputs:{release_id:$release_id,source_sha:$source_sha,upstream_sha:$upstream_sha,standard_digest:$standard_digest,tensorrt_digest:$tensorrt_digest,manifest_sha256:$manifest_sha256,manifest_url:$manifest_url,run_url:$run_url}}')"
+          GH_TOKEN="${SENTINEL_TOKEN}" gh api --silent --method POST \
+            repos/jvallery/sentinel/actions/workflows/frigate-promotion.yml/dispatches \
+            --input - <<<"${payload}"
