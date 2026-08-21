@@ -53,6 +53,7 @@ from frigate.api.defs.response.event_response import (
 )
 from frigate.api.defs.response.generic_response import GenericResponse
 from frigate.api.defs.tags import Tags
+from frigate.api.explore_query import query_explore_events
 from frigate.comms.event_metadata_updater import EventMetadataTypeEnum
 from frigate.config.classification import ObjectClassificationType
 from frigate.const import CLIPS_DIR
@@ -386,84 +387,7 @@ def events_explore(
     limit: int = 10,
     allowed_cameras: list[str] = Depends(get_allowed_cameras_for_filter),
 ):
-    # get distinct labels for all events
-    distinct_labels = (
-        Event.select(Event.label)
-        .where(Event.camera << allowed_cameras)
-        .distinct()
-        .order_by(Event.label)
-    )
-
-    label_counts = {}
-
-    def event_generator():
-        for label_obj in distinct_labels.iterator():
-            label = label_obj.label
-
-            # get most recent events for this label
-            label_events = (
-                Event.select()
-                .where((Event.label == label) & (Event.camera << allowed_cameras))
-                .order_by(Event.start_time.desc())
-                .limit(limit)
-                .iterator()
-            )
-
-            # count total events for this label
-            label_counts[label] = (
-                Event.select()
-                .where((Event.label == label) & (Event.camera << allowed_cameras))
-                .count()
-            )
-
-            yield from label_events
-
-    def process_events():
-        for event in event_generator():
-            processed_event = {
-                "id": event.id,
-                "camera": event.camera,
-                "label": event.label,
-                "zones": event.zones,
-                "start_time": event.start_time,
-                "end_time": event.end_time,
-                "has_clip": event.has_clip,
-                "has_snapshot": event.has_snapshot,
-                "plus_id": event.plus_id,
-                "retain_indefinitely": event.retain_indefinitely,
-                "sub_label": event.sub_label,
-                "top_score": event.top_score,
-                "false_positive": event.false_positive,
-                "box": event.box,
-                "data": {
-                    k: v
-                    for k, v in event.data.items()
-                    if k
-                    in [
-                        "type",
-                        "score",
-                        "top_score",
-                        "description",
-                        "sub_label_score",
-                        "average_estimated_speed",
-                        "velocity_angle",
-                        "path_data",
-                        "recognized_license_plate",
-                        "recognized_license_plate_score",
-                    ]
-                },
-                "event_count": label_counts[event.label],
-            }
-            yield processed_event
-
-    # convert iterator to list and sort
-    processed_events = sorted(
-        process_events(),
-        key=lambda x: (x["event_count"], x["start_time"]),
-        reverse=True,
-    )
-
-    return JSONResponse(content=processed_events)
+    return JSONResponse(content=query_explore_events(Event, allowed_cameras, limit))
 
 
 @router.get(
