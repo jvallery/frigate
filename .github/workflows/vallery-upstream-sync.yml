@@ -40,6 +40,7 @@ jobs:
 
       - name: Configure the mirror-only deploy identity
         id: mirror-key
+        if: inputs.dry_run != true
         env:
           MIRROR_DEPLOY_KEY: ${{ secrets.VALLERY_MIRROR_DEPLOY_KEY }}
         run: |
