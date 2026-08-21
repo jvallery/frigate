@@ -57,6 +57,7 @@ class TestGenAIProcessorSync(unittest.TestCase):
         maintainer.requestor = MagicMock()
         maintainer.metrics = MagicMock()
         maintainer.genai_manager = MagicMock()
+        maintainer.description_queue = MagicMock()
         maintainer.semantic_trigger_processor = None
         return maintainer
 
@@ -173,7 +174,7 @@ class TestObjectDescriptionCameraGating(unittest.TestCase):
         genai_manager.description_client = MagicMock()
 
         return ObjectDescriptionProcessor(
-            config, None, MagicMock(), MagicMock(), genai_manager, None
+            config, None, MagicMock(), MagicMock(), genai_manager, None, MagicMock()
         )
 
     def _update(self, processor: ObjectDescriptionProcessor) -> None:
