@@ -104,6 +104,12 @@ jobs:
           test "$(jq -er .source.upstream_sha release-evidence/release-manifest.json)" = "${UPSTREAM_SHA}"
           test "$(jq -er '.artifacts["standard-amd64"].digest' release-evidence/release-manifest.json)" = "${STANDARD_DIGEST}"
           test "$(jq -er '.artifacts["tensorrt-amd64"].digest' release-evidence/release-manifest.json)" = "${TENSORRT_DIGEST}"
+          jq -e '.migrations | length > 0 and
+            all(.[]; (.name | test("^[0-9]{3}_[a-z0-9_]+$")) and
+              (.path == ("migrations/" + .name + ".py")) and
+              (.migration_class | length > 0) and (.rollback_class | length > 0)) and
+            any(.[]; .name == "900_performance_indexes")' \
+            release-evidence/release-manifest.json >/dev/null
           test "$(jq -er .promotion.cluster_mutated_by_build release-evidence/release-manifest.json)" = "false"
 
       - name: Mint and prove the Sentinel-only workflow-dispatch token

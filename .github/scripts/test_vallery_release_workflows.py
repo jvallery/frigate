@@ -166,7 +166,30 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
             metadata_path = root / "metadata.json"
             ledger_path = root / "ledger.json"
             metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
-            ledger_path.write_text("{}\n", encoding="utf-8")
+            ledger_path.write_text(
+                json.dumps(
+                    {
+                        "patches": [
+                            {
+                                "id": "VLY-TEST-001",
+                                "status": "candidate",
+                                "affected_files": ["migrations/036_add_query_indexes.py"],
+                                "migration_class": "additive_schema_indexes",
+                                "rollback_class": "image_rollback_safe_indexes_remain",
+                            },
+                            {
+                                "id": "VLY-TEST-002",
+                                "status": "candidate",
+                                "affected_files": ["migrations/900_performance_indexes.py"],
+                                "migration_class": "history_compatibility_noop",
+                                "rollback_class": "required_for_existing_history_image_rollback_safe",
+                            },
+                        ]
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             manifest = MANIFEST.create(
                 Namespace(
                     metadata=metadata_path,
@@ -187,12 +210,18 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         self.assertIn(f"registry.vallery.net/jvallery/frigate@{digest_b}", serialized)
         self.assertNotIn("registry-origin", serialized)
         self.assertFalse(manifest["promotion"]["cluster_mutated_by_build"])
+        self.assertEqual(
+            [row["name"] for row in manifest["migrations"]],
+            ["036_add_query_indexes", "900_performance_indexes"],
+        )
 
     def test_schema_requires_both_variants(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
         self.assertEqual(schema["additionalProperties"], False)
         self.assertEqual(schema["properties"]["source"]["additionalProperties"], False)
         self.assertEqual(schema["properties"]["build"]["additionalProperties"], False)
+        self.assertIn("migrations", schema["required"])
+        self.assertEqual(schema["properties"]["migrations"]["minItems"], 1)
         self.assertEqual(
             schema["properties"]["artifacts"]["required"],
             ["standard-amd64", "tensorrt-amd64"],

@@ -37,6 +37,36 @@ def sha256_file(path: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
+def active_migrations(ledger: dict) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    for patch in ledger.get("patches") or []:
+        if patch.get("status") == "retired":
+            continue
+        migration_class = patch.get("migration_class")
+        rollback_class = patch.get("rollback_class")
+        for path in patch.get("affected_files") or []:
+            if not re.fullmatch(r"migrations/[0-9]{3}_[a-z0-9_]+\.py", str(path)):
+                continue
+            if not isinstance(migration_class, str) or not migration_class:
+                fail(f"migration patch {patch.get('id')!r} has no migration class")
+            if not isinstance(rollback_class, str) or not rollback_class:
+                fail(f"migration patch {patch.get('id')!r} has no rollback class")
+            records.append(
+                {
+                    "name": Path(path).stem,
+                    "path": path,
+                    "migration_class": migration_class,
+                    "rollback_class": rollback_class,
+                }
+            )
+    records.sort(key=lambda record: record["path"])
+    if not records:
+        fail("active patch ledger contains no migration inventory")
+    if len({record["path"] for record in records}) != len(records):
+        fail("active patch ledger contains a duplicate migration path")
+    return records
+
+
 def create(args: argparse.Namespace) -> dict:
     for label, value in (("source", args.source_sha), ("upstream", args.upstream_sha)):
         if not SHA_RE.fullmatch(value):
@@ -45,6 +75,7 @@ def create(args: argparse.Namespace) -> dict:
         fail("release ID has an invalid format")
 
     metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
+    patch_ledger = json.loads(args.patch_ledger.read_text(encoding="utf-8"))
     standard_digest = target_digest(metadata, "vallery-standard")
     tensorrt_digest = target_digest(metadata, "tensorrt")
     if args.standard_digest != standard_digest:
@@ -104,6 +135,7 @@ def create(args: argparse.Namespace) -> dict:
             "path": ".vallery/downstream-patches.json",
             "sha256": sha256_file(args.patch_ledger),
         },
+        "migrations": active_migrations(patch_ledger),
         "promotion": {
             "release_class": "additive-schema",
             "rollback_class": "image-rollback-safe-indexes-remain",
