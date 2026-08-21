@@ -1,0 +1,164 @@
+name: Vallery release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact protected vallery/prod commit to release
+        required: true
+        type: string
+      upstream_sha:
+        description: Exact reviewed upstream commit carried by the fork
+        required: true
+        type: string
+      release_id:
+        description: Annotated tag and immutable release identifier
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: vallery-release-${{ inputs.release_id }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Refuse mutable release replacement
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Prove exact protected release identity is unused
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "jvallery/frigate"
+          test "${GITHUB_REF}" = "refs/heads/vallery/prod"
+          test "${REF_PROTECTED}" = "true"
+          test "${GITHUB_SHA}" = "${SOURCE_SHA}"
+          if gh release view "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::release ${RELEASE_ID} already exists and is immutable"
+            exit 41
+          fi
+
+  build:
+    needs: preflight
+    uses: ./.github/workflows/vallery-tensorrt-build.yml
+    with:
+      source_sha: ${{ inputs.source_sha }}
+      upstream_sha: ${{ inputs.upstream_sha }}
+      release_id: ${{ inputs.release_id }}
+    secrets: inherit
+
+  publish:
+    name: Publish annotated release and dispatch Sentinel
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      STANDARD_DIGEST: ${{ needs.build.outputs.standard_digest }}
+      TENSORRT_DIGEST: ${{ needs.build.outputs.tensorrt_digest }}
+      MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Prove the publisher is running reviewed protected workflow code
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "jvallery/frigate"
+          test "${GITHUB_REF}" = "refs/heads/vallery/prod"
+          test "${REF_PROTECTED}" = "true"
+          test "${GITHUB_SHA}" = "${SOURCE_SHA}"
+          [[ "${STANDARD_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${TENSORRT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${MANIFEST_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+      - name: Download the exact build evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: frigate-release-${{ inputs.release_id }}
+          path: release-evidence
+
+      - name: Verify the release manifest and evidence closure
+        run: |
+          set -euo pipefail
+          actual="sha256:$(sha256sum release-evidence/release-manifest.json | cut -d' ' -f1)"
+          test "${actual}" = "${MANIFEST_SHA256}"
+          (cd release-evidence && sha256sum --check release-manifest.sha256)
+          test "$(jq -er .release_id release-evidence/release-manifest.json)" = "${RELEASE_ID}"
+          test "$(jq -er .source.fork_sha release-evidence/release-manifest.json)" = "${SOURCE_SHA}"
+          test "$(jq -er .source.upstream_sha release-evidence/release-manifest.json)" = "${UPSTREAM_SHA}"
+          test "$(jq -er '.artifacts["standard-amd64"].digest' release-evidence/release-manifest.json)" = "${STANDARD_DIGEST}"
+          test "$(jq -er '.artifacts["tensorrt-amd64"].digest' release-evidence/release-manifest.json)" = "${TENSORRT_DIGEST}"
+          test "$(jq -er .promotion.cluster_mutated_by_build release-evidence/release-manifest.json)" = "false"
+
+      - name: Create or verify the annotated release tag
+        run: |
+          set -euo pipefail
+          ref_path="repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_ID}"
+          if tag_object="$(gh api "${ref_path}" --jq .object.sha 2>/dev/null)"; then
+            target="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq .object.sha)"
+            test "${target}" = "${SOURCE_SHA}"
+          else
+            tag_object="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/tags" \
+              -f tag="${RELEASE_ID}" \
+              -f message="Vallery Frigate ${RELEASE_ID}; source ${SOURCE_SHA}; upstream ${UPSTREAM_SHA}" \
+              -f object="${SOURCE_SHA}" \
+              -f type=commit \
+              --jq .sha)"
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${RELEASE_ID}" -f sha="${tag_object}" >/dev/null
+          fi
+
+      - name: Publish the immutable GitHub release
+        run: |
+          set -euo pipefail
+          notes="Source: ${SOURCE_SHA}\nUpstream: ${UPSTREAM_SHA}\nTensorRT: ghcr.io/jvallery/frigate@${TENSORRT_DIGEST}\nZot: registry.vallery.net/jvallery/frigate@${TENSORRT_DIGEST}\nBuild: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if gh release view "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::release ${RELEASE_ID} appeared after preflight"
+            exit 42
+          fi
+          gh release create "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
+            --title "Frigate ${RELEASE_ID}" --notes "${notes}" release-evidence/*
+
+      - name: Mint a Sentinel-only dispatch token
+        id: sentinel-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SENTINEL_PROMOTION_APP_ID }}
+          private-key: ${{ secrets.SENTINEL_PROMOTION_APP_PRIVATE_KEY }}
+          owner: jvallery
+          repositories: sentinel
+          permission-actions: write
+          permission-contents: read
+
+      - name: Dispatch the verified release to Sentinel
+        env:
+          SENTINEL_TOKEN: ${{ steps.sentinel-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          payload="$(jq -nc \
+            --arg release_id "${RELEASE_ID}" \
+            --arg source_sha "${SOURCE_SHA}" \
+            --arg upstream_sha "${UPSTREAM_SHA}" \
+            --arg standard_digest "${STANDARD_DIGEST}" \
+            --arg tensorrt_digest "${TENSORRT_DIGEST}" \
+            --arg manifest_sha256 "${MANIFEST_SHA256}" \
+            --arg manifest_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_ID}/release-manifest.json" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{event_type:"frigate-release",client_payload:{release_id:$release_id,source_sha:$source_sha,upstream_sha:$upstream_sha,standard_digest:$standard_digest,tensorrt_digest:$tensorrt_digest,manifest_sha256:$manifest_sha256,manifest_url:$manifest_url,run_url:$run_url}}')"
+          GH_TOKEN="${SENTINEL_TOKEN}" gh api --method POST repos/jvallery/sentinel/dispatches --input - <<<"${payload}"

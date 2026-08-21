@@ -1,0 +1,343 @@
+name: Vallery protected image build
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact protected vallery/prod commit to build
+        required: true
+        type: string
+      upstream_sha:
+        description: Exact reviewed upstream commit carried by the fork
+        required: true
+        type: string
+      release_id:
+        description: Immutable Vallery release identifier
+        required: true
+        type: string
+    outputs:
+      standard_digest:
+        value: ${{ jobs.build.outputs.standard_digest }}
+      tensorrt_digest:
+        value: ${{ jobs.build.outputs.tensorrt_digest }}
+      manifest_sha256:
+        value: ${{ jobs.build.outputs.manifest_sha256 }}
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: vallery-protected-build-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build standard amd64 and TensorRT
+    runs-on: build-trusted
+    timeout-minutes: 240
+    outputs:
+      standard_digest: ${{ steps.verify.outputs.standard_digest }}
+      tensorrt_digest: ${{ steps.verify.outputs.tensorrt_digest }}
+      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      GHCR_REGISTRY: ghcr.io
+      GHCR_REPOSITORY: ghcr.io/jvallery/frigate
+      ZOT_PUBLIC_REGISTRY: registry.vallery.net
+      ZOT_PUBLIC_REPOSITORY: registry.vallery.net/jvallery/frigate
+      ZOT_PUSH_REGISTRY: ${{ secrets.VALLERY_ZOT_PUSH_REGISTRY }}
+      BUILDKIT_HOST: tcp://127.0.0.1:1234
+      BUILDX_METADATA_PROVENANCE: max
+      BUILDX_METADATA_WARNINGS: "true"
+    steps:
+      - name: Prove protected source and isolated authorities
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "jvallery/frigate"
+          test "${GITHUB_EVENT_NAME}" != "pull_request"
+          test "${GITHUB_EVENT_NAME}" != "pull_request_target"
+          test "${GITHUB_REF}" = "refs/heads/vallery/prod"
+          test "${REF_PROTECTED}" = "true"
+          test "${GITHUB_SHA}" = "${SOURCE_SHA}"
+          test -n "${ZOT_PUSH_REGISTRY}"
+          test -r /run/secrets/zot/config.json
+          test -z "${KUBECONFIG:-}"
+          test ! -S /var/run/docker.sock
+
+      - name: Check out the exact protected source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate source, upstream, and patch-ledger closure
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/verify_vallery_release_inputs.py \
+            --source-sha "${SOURCE_SHA}" \
+            --upstream-sha "${UPSTREAM_SHA}" \
+            --release-id "${RELEASE_ID}"
+          python3 .github/scripts/verify_downstream_patch_ledger.py
+
+      - name: Install checksum-pinned Docker CLI and Buildx
+        env:
+          DOCKER_VERSION: 29.7.2
+          DOCKER_SHA256: 803d433f226db4776e1768fd319fc6c6e4935a456acf84fcc0080818b854bc8f
+          BUILDX_VERSION: v0.36.1
+          BUILDX_SHA256: 48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778
+        run: |
+          set -euo pipefail
+          install_root="${RUNNER_TEMP}/vallery-tools"
+          mkdir -p "${install_root}/bin" "${install_root}/docker-config/cli-plugins"
+          curl --fail --silent --show-error --location \
+            "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" \
+            --output "${RUNNER_TEMP}/docker.tgz"
+          echo "${DOCKER_SHA256}  ${RUNNER_TEMP}/docker.tgz" | sha256sum --check --strict
+          tar -xzf "${RUNNER_TEMP}/docker.tgz" -C "${RUNNER_TEMP}" docker/docker
+          install -m 0755 "${RUNNER_TEMP}/docker/docker" "${install_root}/bin/docker"
+          curl --fail --silent --show-error --location \
+            "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" \
+            --output "${install_root}/docker-config/cli-plugins/docker-buildx"
+          echo "${BUILDX_SHA256}  ${install_root}/docker-config/cli-plugins/docker-buildx" | \
+            sha256sum --check --strict
+          chmod 0755 "${install_root}/docker-config/cli-plugins/docker-buildx"
+          {
+            echo "${install_root}/bin"
+            echo "/opt/buildkit/bin"
+          } >> "${GITHUB_PATH}"
+          echo "DOCKER_CONFIG=${install_root}/docker-config" >> "${GITHUB_ENV}"
+
+      - name: Prepare job-scoped registry authentication
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          from pathlib import Path
+
+          source = Path("/run/secrets/zot/config.json")
+          target = Path(os.environ["DOCKER_CONFIG"]) / "config.json"
+          config = json.loads(source.read_text(encoding="utf-8"))
+          auths = config.get("auths")
+          registry = os.environ["ZOT_PUSH_REGISTRY"]
+          if not isinstance(auths, dict) or registry not in auths:
+              raise SystemExit("Zot writer does not match the configured push registry")
+          encoded = base64.b64encode(
+              f"{os.environ['GITHUB_ACTOR']}:{os.environ['GHCR_TOKEN']}".encode()
+          ).decode()
+          auths["ghcr.io"] = {"auth": encoded}
+          target.write_text(json.dumps(config), encoding="utf-8")
+          target.chmod(0o600)
+          PY
+
+      - name: Bind Buildx to the per-job rootless BuildKit sidecar
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if buildctl debug workers >/dev/null 2>&1; then
+              break
+            fi
+            test "${attempt}" -lt 60
+            sleep 2
+          done
+          docker buildx create --name vallery-job --driver remote "${BUILDKIT_HOST}" --use
+          docker buildx inspect --bootstrap
+          docker version --format '{{.Client.Version}}'
+          docker buildx version
+          buildctl --version
+
+      - name: Render the exact upstream-compatible bake plan
+        run: |
+          set -euo pipefail
+          docker buildx bake \
+            --builder vallery-job \
+            --file docker/tensorrt/trt.hcl \
+            --file .vallery/release-build.hcl \
+            --print vallery-release > "${RUNNER_TEMP}/bake-plan.json"
+          jq -e '.target | (has("tensorrt") and has("vallery-standard"))' \
+            "${RUNNER_TEMP}/bake-plan.json" >/dev/null
+
+      - name: Build, attest, cache, and push both variants once
+        env:
+          COMPUTE_LEVEL: "50 60 70 80 90"
+        run: |
+          set -euo pipefail
+          evidence="${RUNNER_TEMP}/frigate-release"
+          mkdir -p "${evidence}"
+          source_epoch="$(git show -s --format=%ct "${SOURCE_SHA}")"
+          export SOURCE_DATE_EPOCH="${source_epoch}"
+          echo "SOURCE_DATE_EPOCH=${source_epoch}" >> "${GITHUB_ENV}"
+          standard_ghcr="${GHCR_REPOSITORY}:${RELEASE_ID}-standard"
+          standard_zot="${ZOT_PUSH_REGISTRY}/jvallery/frigate:${RELEASE_ID}-standard"
+          tensorrt_ghcr="${GHCR_REPOSITORY}:${RELEASE_ID}-tensorrt"
+          tensorrt_zot="${ZOT_PUSH_REGISTRY}/jvallery/frigate:${RELEASE_ID}-tensorrt"
+          started="$(date +%s)"
+          raw_log="${RUNNER_TEMP}/build.log.raw"
+          set +e
+          docker buildx bake \
+            --builder vallery-job \
+            --file docker/tensorrt/trt.hcl \
+            --file .vallery/release-build.hcl \
+            --push \
+            --progress plain \
+            --provenance mode=max \
+            --sbom true \
+            --metadata-file "${RUNNER_TEMP}/build-metadata.json" \
+            --set "vallery-standard.tags=${standard_ghcr},${standard_zot}" \
+            --set "tensorrt.tags=${tensorrt_ghcr},${tensorrt_zot}" \
+            --set "*.labels.org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --set "*.labels.org.opencontainers.image.version=${RELEASE_ID}" \
+            --set "*.labels.net.vallery.frigate.upstream-sha=${UPSTREAM_SHA}" \
+            --set "vallery-standard.cache-from=type=registry,ref=${ZOT_PUSH_REGISTRY}/jvallery/frigate/arc/cache/standard:buildkit-v1" \
+            --set "vallery-standard.cache-to=type=registry,ref=${ZOT_PUSH_REGISTRY}/jvallery/frigate/arc/cache/standard:buildkit-v1,mode=max,oci-mediatypes=true,image-manifest=true" \
+            --set "tensorrt.cache-from=type=registry,ref=${ZOT_PUSH_REGISTRY}/jvallery/frigate/arc/cache/tensorrt:buildkit-v1" \
+            --set "tensorrt.cache-to=type=registry,ref=${ZOT_PUSH_REGISTRY}/jvallery/frigate/arc/cache/tensorrt:buildkit-v1,mode=max,oci-mediatypes=true,image-manifest=true" \
+            vallery-release > "${raw_log}" 2>&1
+          build_status="$?"
+          set -e
+          finished="$(date +%s)"
+          BUILD_STATUS="${build_status}" ELAPSED_SECONDS="$((finished - started))" \
+            RAW_LOG="${raw_log}" EVIDENCE="${evidence}" python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          raw = Path(os.environ["RAW_LOG"]).read_text(encoding="utf-8", errors="replace")
+          private_registry = os.environ["ZOT_PUSH_REGISTRY"]
+          if not private_registry:
+              raise SystemExit("Zot push registry is empty")
+          redacted = raw.replace(private_registry, "<zot-push-registry>")
+          evidence = Path(os.environ["EVIDENCE"])
+          (evidence / "build.log").write_text(redacted, encoding="utf-8")
+          metrics = {
+              "schema_version": 1,
+              "elapsed_seconds": int(os.environ["ELAPSED_SECONDS"]),
+              "build_exit_code": int(os.environ["BUILD_STATUS"]),
+              "cached_vertex_markers": len(re.findall(r"(?m)^#[0-9]+ CACHED$", raw)),
+              "completed_vertex_markers": len(re.findall(r"(?m)^#[0-9]+ DONE ", raw)),
+              "private_registry_redacted": private_registry not in redacted,
+          }
+          (evidence / "cache-metrics.json").write_text(
+              json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          print(redacted, end="")
+          PY
+          test "${build_status}" -eq 0
+
+      - name: Verify GHCR, Zot push, and Zot pull digests
+        id: verify
+        run: |
+          set -euo pipefail
+          inspect_digest() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest.Digest}}' | jq -er .
+          }
+          standard_expected="$(jq -er '.["vallery-standard"]["containerimage.digest"]' "${RUNNER_TEMP}/build-metadata.json")"
+          tensorrt_expected="$(jq -er '.tensorrt["containerimage.digest"]' "${RUNNER_TEMP}/build-metadata.json")"
+          [[ "${standard_expected}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${tensorrt_expected}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$(inspect_digest "${GHCR_REPOSITORY}:${RELEASE_ID}-standard")" = "${standard_expected}"
+          test "$(inspect_digest "${ZOT_PUSH_REGISTRY}/jvallery/frigate:${RELEASE_ID}-standard")" = "${standard_expected}"
+          test "$(inspect_digest "${GHCR_REPOSITORY}:${RELEASE_ID}-tensorrt")" = "${tensorrt_expected}"
+          test "$(inspect_digest "${ZOT_PUSH_REGISTRY}/jvallery/frigate:${RELEASE_ID}-tensorrt")" = "${tensorrt_expected}"
+          for attempt in $(seq 1 12); do
+            public_standard="$(inspect_digest "${ZOT_PUBLIC_REPOSITORY}:${RELEASE_ID}-standard" 2>/dev/null || true)"
+            public_tensorrt="$(inspect_digest "${ZOT_PUBLIC_REPOSITORY}:${RELEASE_ID}-tensorrt" 2>/dev/null || true)"
+            if [[ "${public_standard}" == "${standard_expected}" && "${public_tensorrt}" == "${tensorrt_expected}" ]]; then
+              break
+            fi
+            test "${attempt}" -lt 12
+            sleep 10
+          done
+          echo "standard_digest=${standard_expected}" >> "${GITHUB_OUTPUT}"
+          echo "tensorrt_digest=${tensorrt_expected}" >> "${GITHUB_OUTPUT}"
+
+      - name: Export attached SBOM and BuildKit provenance evidence
+        run: |
+          set -euo pipefail
+          evidence="${RUNNER_TEMP}/frigate-release"
+          docker buildx imagetools inspect \
+            "${GHCR_REPOSITORY}:${RELEASE_ID}-standard" --format '{{json .SBOM}}' \
+            > "${evidence}/standard.sbom.spdx.json"
+          docker buildx imagetools inspect \
+            "${GHCR_REPOSITORY}:${RELEASE_ID}-standard" --format '{{json .Provenance}}' \
+            > "${evidence}/standard.provenance.json"
+          docker buildx imagetools inspect \
+            "${GHCR_REPOSITORY}:${RELEASE_ID}-tensorrt" --format '{{json .SBOM}}' \
+            > "${evidence}/tensorrt.sbom.spdx.json"
+          docker buildx imagetools inspect \
+            "${GHCR_REPOSITORY}:${RELEASE_ID}-tensorrt" --format '{{json .Provenance}}' \
+            > "${evidence}/tensorrt.provenance.json"
+          for file in "${evidence}"/*.json; do jq -e 'type == "object"' "${file}" >/dev/null; done
+
+      - name: Create the public release manifest
+        id: manifest
+        env:
+          STANDARD_DIGEST: ${{ steps.verify.outputs.standard_digest }}
+          TENSORRT_DIGEST: ${{ steps.verify.outputs.tensorrt_digest }}
+        run: |
+          set -euo pipefail
+          evidence="${RUNNER_TEMP}/frigate-release"
+          upstream_branch="$(jq -er .selected_upstream.branch .vallery/downstream-patches.json)"
+          python3 .github/scripts/create_vallery_release_manifest.py \
+            --metadata "${RUNNER_TEMP}/build-metadata.json" \
+            --patch-ledger .vallery/downstream-patches.json \
+            --output "${evidence}/release-manifest.json" \
+            --release-id "${RELEASE_ID}" \
+            --source-sha "${SOURCE_SHA}" \
+            --upstream-sha "${UPSTREAM_SHA}" \
+            --upstream-branch "${upstream_branch}" \
+            --standard-digest "${STANDARD_DIGEST}" \
+            --tensorrt-digest "${TENSORRT_DIGEST}" \
+            --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+            --workflow-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          manifest_hash="sha256:$(sha256sum "${evidence}/release-manifest.json" | cut -d' ' -f1)"
+          echo "${manifest_hash#sha256:}  release-manifest.json" > "${evidence}/release-manifest.sha256"
+          echo "manifest_sha256=${manifest_hash}" >> "${GITHUB_OUTPUT}"
+
+      - name: Sign GitHub provenance for the standard image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/jvallery/frigate
+          subject-digest: ${{ steps.verify.outputs.standard_digest }}
+          push-to-registry: true
+
+      - name: Sign GitHub provenance for the TensorRT image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/jvallery/frigate
+          subject-digest: ${{ steps.verify.outputs.tensorrt_digest }}
+          push-to-registry: true
+
+      - name: Sign the release manifest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/frigate-release/release-manifest.json
+
+      - name: Upload immutable build evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frigate-release-${{ inputs.release_id }}
+          path: ${{ runner.temp }}/frigate-release/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Remove job-scoped registry material
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -n "${DOCKER_CONFIG:-}" && "${DOCKER_CONFIG}" == "${RUNNER_TEMP}/"* ]]; then
+            rm -f "${DOCKER_CONFIG}/config.json"
+          fi

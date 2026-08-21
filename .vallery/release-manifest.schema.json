@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jvallery/frigate/.vallery/release-manifest.schema.json",
+  "title": "Vallery Frigate release manifest",
+  "type": "object",
+  "required": ["schema", "release_id", "created_at", "source", "build", "artifacts", "patch_ledger", "promotion"],
+  "properties": {
+    "schema": {"const": "vallery.frigate.release/1"},
+    "release_id": {"$ref": "#/$defs/release_id"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "source": {
+      "type": "object",
+      "required": ["upstream_repository", "upstream_branch", "upstream_sha", "fork_repository", "fork_branch", "fork_sha"],
+      "properties": {
+        "upstream_repository": {"const": "blakeblackshear/frigate"},
+        "upstream_branch": {"enum": ["dev", "0.19"]},
+        "upstream_sha": {"$ref": "#/$defs/sha"},
+        "fork_repository": {"const": "jvallery/frigate"},
+        "fork_branch": {"const": "vallery/prod"},
+        "fork_sha": {"$ref": "#/$defs/sha"}
+      },
+      "additionalProperties": false
+    },
+    "build": {
+      "type": "object",
+      "required": ["workflow_run", "runner_profile", "platform", "buildkit", "buildx", "docker_cli", "source_date_epoch", "cache_namespace"],
+      "properties": {
+        "workflow_run": {"type": "string", "pattern": "^https://github\\.com/jvallery/frigate/actions/runs/[0-9]+$"},
+        "runner_profile": {"const": "build-trusted"},
+        "platform": {"const": "linux/amd64"},
+        "buildkit": {"const": "v0.31.2-rootless"},
+        "buildx": {"const": "v0.36.1"},
+        "docker_cli": {"const": "29.7.2"},
+        "source_date_epoch": {"type": "integer", "minimum": 0},
+        "cache_namespace": {"const": "jvallery/frigate/arc/cache"}
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["standard-amd64", "tensorrt-amd64"],
+      "properties": {
+        "standard-amd64": {"$ref": "#/$defs/artifact"},
+        "tensorrt-amd64": {"$ref": "#/$defs/artifact"}
+      },
+      "additionalProperties": false
+    },
+    "patch_ledger": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"const": ".vallery/downstream-patches.json"},
+        "sha256": {"$ref": "#/$defs/digest"}
+      },
+      "additionalProperties": false
+    },
+    "promotion": {
+      "type": "object",
+      "required": ["release_class", "rollback_class", "required_soaks", "cluster_mutated_by_build"],
+      "properties": {
+        "release_class": {"enum": ["image-only", "additive-schema", "forward-fix-only"]},
+        "rollback_class": {"type": "string", "minLength": 1},
+        "required_soaks": {
+          "type": "array",
+          "prefixItems": [{"const": "immediate"}, {"const": "15m"}, {"const": "24h"}],
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "cluster_mutated_by_build": {"const": false}
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "release_id": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+-vallery\\.[0-9]{8}\\.[1-9][0-9]*$"},
+    "registry_reference": {
+      "type": "object",
+      "required": ["tag", "canonical", "verified_digest"],
+      "properties": {
+        "tag": {"type": "string", "minLength": 1},
+        "canonical": {"type": "string", "pattern": "^(ghcr\\.io|registry\\.vallery\\.net)/jvallery/frigate@sha256:[0-9a-f]{64}$"},
+        "verified_digest": {"$ref": "#/$defs/digest"}
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["digest", "ghcr", "zot", "sbom", "buildkit_provenance"],
+      "properties": {
+        "digest": {"$ref": "#/$defs/digest"},
+        "ghcr": {"$ref": "#/$defs/registry_reference"},
+        "zot": {"$ref": "#/$defs/registry_reference"},
+        "sbom": {"type": "string", "pattern": "^(standard|tensorrt)\\.sbom\\.spdx\\.json$"},
+        "buildkit_provenance": {"type": "string", "pattern": "^(standard|tensorrt)\\.provenance\\.json$"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
