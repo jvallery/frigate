@@ -387,6 +387,58 @@ class CustomCollector:
         yield gpu_compute_usages
         yield gpu_dec_usages
 
+        genai_jobs = CounterMetricFamily(
+            "frigate_genai_description_jobs",
+            "Cumulative bounded GenAI description job outcomes",
+            labels=["surface", "outcome"],
+        )
+        genai_queue = GaugeMetricFamily(
+            "frigate_genai_description_queue",
+            "Current bounded GenAI description queue state",
+            labels=["surface", "state"],
+        )
+        genai_capacity = GaugeMetricFamily(
+            "frigate_genai_description_capacity",
+            "Configured bounded GenAI description queue capacity",
+            labels=["kind"],
+        )
+        try:
+            queue_stats = stats["embeddings"]["genai_description_queue"]
+            counter_outcomes = (
+                "queued",
+                "attempted",
+                "successful",
+                "empty",
+                "timeout",
+                "provider_error",
+                "provider_unavailable",
+                "invalid_response",
+                "persistence_error",
+                "invalid_input",
+                "internal_error",
+                "retried",
+                "rejected",
+                "failed",
+                "cancelled",
+            )
+            for surface in ("object", "review"):
+                surface_stats = queue_stats[surface]
+                for outcome in counter_outcomes:
+                    genai_jobs.add_metric(
+                        [surface, outcome], float(surface_stats[outcome])
+                    )
+                for state in ("pending", "active"):
+                    genai_queue.add_metric(
+                        [surface, state], float(surface_stats[state])
+                    )
+            genai_capacity.add_metric(["pending"], float(queue_stats["queue_capacity"]))
+            genai_capacity.add_metric(["active"], float(queue_stats["active_limit"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+        yield genai_jobs
+        yield genai_queue
+        yield genai_capacity
+
         # service stats
         uptime_seconds = GaugeMetricFamily(
             "frigate_service_uptime_seconds", "Uptime seconds"

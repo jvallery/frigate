@@ -7,6 +7,7 @@ import numpy as np
 
 from frigate.const import MODEL_CACHE_DIR
 from frigate.detectors.detection_runners import get_optimized_runner
+from frigate.embeddings.onnx.arcface_gpu_retry import ArcFaceRetryController
 from frigate.embeddings.types import EnrichmentModelTypeEnum
 from frigate.log import suppress_stderr_during
 from frigate.util.downloader import ModelDownloader
@@ -129,6 +130,7 @@ class ArcfaceEmbedding(BaseEmbedding):
         self.tokenizer = None
         self.feature_extractor = None
         self.runner = None
+        self._retry_controller = ArcFaceRetryController(logger=logger)
         files_names = list(self.download_urls.keys())
 
         if not all(
@@ -144,7 +146,6 @@ class ArcfaceEmbedding(BaseEmbedding):
             self.downloader.ensure_model_files()
         else:
             self.downloader = None
-            self._load_model_and_utils()
             logger.debug(f"models are already downloaded for {self.model_name}")
 
     def _load_model_and_utils(self):
@@ -157,6 +158,36 @@ class ArcfaceEmbedding(BaseEmbedding):
                 device=self.config.device or "GPU",
                 model_type=EnrichmentModelTypeEnum.arcface.value,
             )
+
+    def reset_runner(self) -> None:
+        self.runner = None
+
+    def __call__(self, inputs):
+        processed = self._preprocess_inputs(inputs)
+
+        def run_inference():
+            self._load_model_and_utils()
+            input_names = self.runner.get_input_names()
+            onnx_inputs = {name: [] for name in input_names}
+            for processed_input in processed:
+                for key, value in processed_input.items():
+                    if key in input_names:
+                        onnx_inputs[key].append(value[0])
+
+            for key in input_names:
+                if onnx_inputs.get(key):
+                    onnx_inputs[key] = np.stack(onnx_inputs[key])
+                else:
+                    logger.warning(f"Expected input '{key}' not found in onnx_inputs")
+
+            outputs = self.runner.run(onnx_inputs)[0]
+            embeddings = self._postprocess_outputs(outputs)
+            return [embedding for embedding in embeddings]
+
+        return self._retry_controller.run(
+            run_inference,
+            self.reset_runner,
+        )
 
     def _preprocess_inputs(self, raw_inputs):
         pil = self._process_image(self._bgr_to_rgb(raw_inputs[0]))

@@ -11,6 +11,15 @@ from openai import OpenAI
 
 from frigate.config import GenAIProviderEnum
 from frigate.genai import GenAIClient, register_genai_provider
+from frigate.genai.image_limit import (
+    enforce_chat_image_limit,
+    limit_description_images,
+)
+from frigate.genai.request_outcome import (
+    AttemptOutcome,
+    reset_outcome,
+    set_outcome,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +74,8 @@ class OpenAIClient(GenAIClient):
         enable_thinking: bool = False,
     ) -> str | None:
         """Submit a request to OpenAI."""
+        reset_outcome()
+        images = limit_description_images(images)
         encoded_images = [base64.b64encode(image).decode("utf-8") for image in images]
         messages_content: list[dict] = [
             {
@@ -127,10 +138,39 @@ class OpenAIClient(GenAIClient):
                         )
                         content = reasoning_content
 
-                return str(content.strip()) if content else None
+                if content and str(content).strip():
+                    set_outcome(AttemptOutcome.success)
+                    return str(content).strip()
+                set_outcome(AttemptOutcome.empty)
+                return None
+            set_outcome(AttemptOutcome.empty)
             return None
-        except (TimeoutException, Exception) as e:
-            logger.warning("OpenAI returned an error: %s", str(e))
+        except TimeoutException:
+            set_outcome(AttemptOutcome.timeout)
+            logger.warning("OpenAI description request timed out")
+            return None
+        except Exception as error:
+            error_type = type(error).__name__
+            if "Timeout" in error_type:
+                set_outcome(AttemptOutcome.timeout)
+                logger.warning("OpenAI description request timed out")
+                return None
+            status = getattr(error, "status_code", "unknown")
+            if not isinstance(status, int):
+                status = "unknown"
+            if (
+                isinstance(status, int)
+                and 400 <= status < 500
+                and status not in (408, 409, 425, 429)
+            ):
+                set_outcome(AttemptOutcome.invalid_input)
+            else:
+                set_outcome(AttemptOutcome.provider_error)
+            logger.warning(
+                "OpenAI description request failed (%s, status=%s)",
+                error_type,
+                status,
+            )
             return None
 
     def list_models(self) -> list[str]:
@@ -210,7 +250,7 @@ class OpenAIClient(GenAIClient):
 
             request_params = {
                 "model": self.genai_config.model,
-                "messages": messages,
+                "messages": enforce_chat_image_limit(messages),
                 "timeout": self.timeout,
                 **self.genai_config.runtime_options,
             }
@@ -332,7 +372,7 @@ class OpenAIClient(GenAIClient):
 
             request_params = {
                 "model": self.genai_config.model,
-                "messages": messages,
+                "messages": enforce_chat_image_limit(messages),
                 "timeout": self.timeout,
                 "stream": True,
                 "stream_options": {"include_usage": True},

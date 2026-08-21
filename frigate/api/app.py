@@ -56,7 +56,8 @@ from frigate.jobs.media_sync import (
     start_media_sync_job,
 )
 from frigate.models import Event, Timeline
-from frigate.stats.prometheus import get_metrics, update_metrics
+from frigate.stats.metrics_endpoint_guard import MetricsBusy, MetricsEndpointGuard
+from frigate.stats.prometheus import collector, get_metrics
 from frigate.types import JobStatusTypesEnum
 from frigate.util.builtin import (
     clean_camera_user_pass,
@@ -85,6 +86,7 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter(tags=[Tags.app])
+metrics_endpoint_guard = MetricsEndpointGuard()
 
 # Short timeout for the /genai/probe path. The probe is interactive — fail
 # fast on hung providers rather than holding an API worker thread.
@@ -164,19 +166,30 @@ def stats_history(request: Request, keys: str = None):
 
 @router.get("/metrics", dependencies=[Depends(allow_any_authenticated())])
 def metrics(request: Request):
-    """Expose Prometheus metrics endpoint and update metrics with latest stats"""
-    # Retrieve the latest statistics and update the Prometheus metrics
+    """Expose one serialized Prometheus snapshot without queuing scrapes."""
     stats = request.app.stats_emitter.get_latest_stats()
-    # query DB for count of events by camera, label
-    event_counts: list[dict[str, Any]] = (
-        Event.select(Event.camera, Event.label, fn.Count())
-        .group_by(Event.camera, Event.label)
-        .dicts()
-    )
 
-    update_metrics(stats=stats, event_counts=event_counts)
-    content, content_type = get_metrics()
-    return Response(content=content, media_type=content_type)
+    def load_event_counts():
+        return (
+            Event.select(Event.camera, Event.label, fn.Count())
+            .group_by(Event.camera, Event.label)
+            .dicts()
+        )
+
+    try:
+        payload = metrics_endpoint_guard.render(
+            stats=stats,
+            load_event_counts=load_event_counts,
+            collector=collector,
+            render_metrics=get_metrics,
+        )
+    except MetricsBusy:
+        return PlainTextResponse(
+            "metrics temporarily unavailable\n",
+            status_code=503,
+        )
+
+    return Response(content=payload.content, media_type=payload.content_type)
 
 
 @router.get(

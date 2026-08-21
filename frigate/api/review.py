@@ -9,7 +9,7 @@ import pandas as pd
 from fastapi import APIRouter, Request
 from fastapi.params import Depends
 from fastapi.responses import JSONResponse
-from peewee import Case, DoesNotExist, IntegrityError, fn, operator
+from peewee import DoesNotExist, IntegrityError, fn, operator
 from playhouse.shortcuts import model_to_dict
 
 from frigate.api.auth import (
@@ -32,6 +32,7 @@ from frigate.api.defs.response.review_response import (
     ReviewSummaryResponse,
 )
 from frigate.api.defs.tags import Tags
+from frigate.api.review_summary_query import query_review_summary
 from frigate.embeddings import EmbeddingsContext
 from frigate.models import Recordings, ReviewSegment, UserReviewStatus
 from frigate.review.types import SeverityEnum
@@ -208,269 +209,15 @@ async def review_summary(
     if isinstance(current_user, JSONResponse):
         return current_user
 
-    user_id = current_user["username"]
-
-    day_ago = (datetime.datetime.now() - datetime.timedelta(hours=24)).timestamp()
-
-    cameras = params.cameras
-    labels = params.labels
-    zones = params.zones
-
-    clauses = [(ReviewSegment.start_time > day_ago)]
-
-    if cameras != "all":
-        requested = set(cameras.split(","))
-        filtered = requested.intersection(allowed_cameras)
-        if not filtered:
-            return JSONResponse(content={})
-        camera_list = list(filtered)
-    else:
-        camera_list = allowed_cameras
-    clauses.append(ReviewSegment.camera << camera_list)
-
-    if labels != "all":
-        # use matching so segments with multiple labels
-        # still match on a search where any label matches
-        label_clauses = []
-        filtered_labels = labels.split(",")
-
-        for label in filtered_labels:
-            label_clauses.append(
-                (ReviewSegment.data["objects"].cast("text") % f'*"{label}"*')
-                | (ReviewSegment.data["audio"].cast("text") % f'*"{label}"*')
-            )
-        clauses.append(reduce(operator.or_, label_clauses))
-    if zones != "all":
-        # use matching so segments with multiple zones
-        # still match on a search where any zone matches
-        zone_clauses = []
-        filtered_zones = zones.split(",")
-
-        for zone in filtered_zones:
-            zone_clauses.append(
-                ReviewSegment.data["zones"].cast("text") % f'*"{zone}"*'
-            )
-        clauses.append(reduce(operator.or_, zone_clauses))
-
-    last_24_query = (
-        ReviewSegment.select(
-            fn.SUM(
-                Case(
-                    None,
-                    [
-                        (
-                            (ReviewSegment.severity == SeverityEnum.alert)
-                            & (UserReviewStatus.has_been_reviewed == True),
-                            1,
-                        )
-                    ],
-                    0,
-                )
-            ).alias("reviewed_alert"),
-            fn.SUM(
-                Case(
-                    None,
-                    [
-                        (
-                            (ReviewSegment.severity == SeverityEnum.detection)
-                            & (UserReviewStatus.has_been_reviewed == True),
-                            1,
-                        )
-                    ],
-                    0,
-                )
-            ).alias("reviewed_detection"),
-            fn.SUM(
-                Case(
-                    None,
-                    [
-                        (
-                            (ReviewSegment.severity == SeverityEnum.alert),
-                            1,
-                        )
-                    ],
-                    0,
-                )
-            ).alias("total_alert"),
-            fn.SUM(
-                Case(
-                    None,
-                    [
-                        (
-                            (ReviewSegment.severity == SeverityEnum.detection),
-                            1,
-                        )
-                    ],
-                    0,
-                )
-            ).alias("total_detection"),
-        )
-        .left_outer_join(
-            UserReviewStatus,
-            on=(
-                (ReviewSegment.id == UserReviewStatus.review_segment)
-                & (UserReviewStatus.user_id == user_id)
-            ),
-        )
-        .where(reduce(operator.and_, clauses))
-        .dicts()
-        .get()
+    data = query_review_summary(
+        params,
+        current_user["username"],
+        allowed_cameras,
+        ReviewSegment,
+        UserReviewStatus,
+        SeverityEnum,
+        get_dst_transitions,
     )
-
-    clauses = []
-
-    if cameras != "all":
-        requested = set(cameras.split(","))
-        filtered = requested.intersection(allowed_cameras)
-        if not filtered:
-            return JSONResponse(content={})
-        camera_list = list(filtered)
-    else:
-        camera_list = allowed_cameras
-    clauses.append(ReviewSegment.camera << camera_list)
-
-    if labels != "all":
-        # use matching so segments with multiple labels
-        # still match on a search where any label matches
-        label_clauses = []
-        filtered_labels = labels.split(",")
-
-        for label in filtered_labels:
-            label_clauses.append(
-                ReviewSegment.data["objects"].cast("text") % f'*"{label}"*'
-            )
-        clauses.append(reduce(operator.or_, label_clauses))
-
-    # Find the time range of available data
-    time_range_query = (
-        ReviewSegment.select(
-            fn.MIN(ReviewSegment.start_time).alias("min_time"),
-            fn.MAX(ReviewSegment.start_time).alias("max_time"),
-        )
-        .where(reduce(operator.and_, clauses) if clauses else True)
-        .dicts()
-        .get()
-    )
-
-    min_time = time_range_query.get("min_time")
-    max_time = time_range_query.get("max_time")
-
-    data = {
-        "last24Hours": last_24_query,
-    }
-
-    # If no data, return early
-    if min_time is None or max_time is None:
-        return JSONResponse(content=data)
-
-    # Get DST transition periods
-    dst_periods = get_dst_transitions(params.timezone, min_time, max_time)
-
-    day_in_seconds = 60 * 60 * 24
-
-    # Query each DST period separately with the correct offset
-    for period_start, period_end, period_offset in dst_periods:
-        # Calculate hour/minute modifiers for this period
-        hours_offset = int(period_offset / 60 / 60)
-        minutes_offset = int(period_offset / 60 - hours_offset * 60)
-        period_hour_modifier = f"{hours_offset} hour"
-        period_minute_modifier = f"{minutes_offset} minute"
-
-        # Build clauses including time range for this period
-        period_clauses = clauses.copy()
-        period_clauses.append(
-            (ReviewSegment.start_time >= period_start)
-            & (ReviewSegment.start_time <= period_end)
-        )
-
-        period_query = (
-            ReviewSegment.select(
-                fn.strftime(
-                    "%Y-%m-%d",
-                    fn.datetime(
-                        ReviewSegment.start_time,
-                        "unixepoch",
-                        period_hour_modifier,
-                        period_minute_modifier,
-                    ),
-                ).alias("day"),
-                fn.SUM(
-                    Case(
-                        None,
-                        [
-                            (
-                                (ReviewSegment.severity == SeverityEnum.alert)
-                                & (UserReviewStatus.has_been_reviewed == True),
-                                1,
-                            )
-                        ],
-                        0,
-                    )
-                ).alias("reviewed_alert"),
-                fn.SUM(
-                    Case(
-                        None,
-                        [
-                            (
-                                (ReviewSegment.severity == SeverityEnum.detection)
-                                & (UserReviewStatus.has_been_reviewed == True),
-                                1,
-                            )
-                        ],
-                        0,
-                    )
-                ).alias("reviewed_detection"),
-                fn.SUM(
-                    Case(
-                        None,
-                        [
-                            (
-                                (ReviewSegment.severity == SeverityEnum.alert),
-                                1,
-                            )
-                        ],
-                        0,
-                    )
-                ).alias("total_alert"),
-                fn.SUM(
-                    Case(
-                        None,
-                        [
-                            (
-                                (ReviewSegment.severity == SeverityEnum.detection),
-                                1,
-                            )
-                        ],
-                        0,
-                    )
-                ).alias("total_detection"),
-            )
-            .left_outer_join(
-                UserReviewStatus,
-                on=(
-                    (ReviewSegment.id == UserReviewStatus.review_segment)
-                    & (UserReviewStatus.user_id == user_id)
-                ),
-            )
-            .where(reduce(operator.and_, period_clauses))
-            .group_by(
-                (ReviewSegment.start_time + period_offset).cast("int") / day_in_seconds
-            )
-            .order_by(ReviewSegment.start_time.desc())
-        )
-
-        # Merge results from this period
-        for e in period_query.dicts().iterator():
-            day_key = e["day"]
-            if day_key in data:
-                # Merge counts if day already exists (edge case at DST boundary)
-                data[day_key]["reviewed_alert"] += e["reviewed_alert"] or 0
-                data[day_key]["reviewed_detection"] += e["reviewed_detection"] or 0
-                data[day_key]["total_alert"] += e["total_alert"] or 0
-                data[day_key]["total_detection"] += e["total_detection"] or 0
-            else:
-                data[day_key] = e
-
     return JSONResponse(content=data)
 
 

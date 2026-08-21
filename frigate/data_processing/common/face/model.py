@@ -10,6 +10,7 @@ from scipy import stats
 
 from frigate.config import FrigateConfig
 from frigate.const import FACE_DIR, MODEL_CACHE_DIR
+from frigate.embeddings.onnx.arcface_gpu_retry import ArcFaceRetryExhausted
 from frigate.embeddings.onnx.face_embedding import ArcfaceEmbedding, FaceNetEmbedding
 from frigate.log import redirect_output_to_logger
 
@@ -333,54 +334,67 @@ class ArcFaceRecognizer(FaceRecognizer):
         self.mean_embs: dict[str, np.ndarray] = {}
         self.face_embedder: ArcfaceEmbedding = ArcfaceEmbedding(config.face_recognition)
         self.model_builder_queue: queue.Queue | None = None
+        self.model_builder_failed = False
 
     def clear(self) -> None:
         self.mean_embs = {}
 
     def run_build_task(self) -> None:
-        self.model_builder_queue = queue.Queue()
+        model_builder_queue: queue.Queue = queue.Queue()
+        self.model_builder_queue = model_builder_queue
 
         def build_model() -> None:
-            face_embeddings_map: dict[str, list[np.ndarray]] = {}
-            idx = 0
+            try:
+                built_embeddings: dict[str, list[np.ndarray]] = {}
+                dir = FACE_DIR
+                for name in os.listdir(dir):
+                    if name == "train":
+                        continue
 
-            dir = FACE_DIR
-            for name in os.listdir(dir):
-                if name == "train":
-                    continue
+                    face_folder = os.path.join(dir, name)
 
-                face_folder = os.path.join(dir, name)
+                    if not os.path.isdir(face_folder):
+                        continue
 
-                if not os.path.isdir(face_folder):
-                    continue
+                    built_embeddings[name] = []
+                    for image in os.listdir(face_folder):
+                        img = cv2.imread(os.path.join(face_folder, image))
 
-                face_embeddings_map[name] = []
-                for image in os.listdir(face_folder):
-                    img = cv2.imread(os.path.join(face_folder, image))
+                        if img is None:
+                            continue  # type: ignore[unreachable]
 
-                    if img is None:
-                        continue  # type: ignore[unreachable]
+                        img = self.align_face(img, img.shape[1], img.shape[0])
+                        emb = self.face_embedder([img])[0].squeeze()
+                        built_embeddings[name].append(emb)
+                face_embeddings_map: dict[str, list[np.ndarray]] | None = (
+                    built_embeddings
+                )
+            except ArcFaceRetryExhausted as error:
+                logger.error(
+                    "ArcFace GPU model build exhausted bounded retries (%s)",
+                    error.error_type,
+                )
+                face_embeddings_map = None
+            except Exception as error:
+                logger.error("ArcFace model build stopped (%s)", type(error).__name__)
+                face_embeddings_map = None
 
-                    img = self.align_face(img, img.shape[1], img.shape[0])
-                    emb = self.face_embedder([img])[0].squeeze()  # type: ignore[arg-type]
-                    face_embeddings_map[name].append(emb)
-
-                idx += 1
-
-            assert self.model_builder_queue is not None
-            self.model_builder_queue.put(face_embeddings_map)
+            model_builder_queue.put(face_embeddings_map)
 
         thread = threading.Thread(target=build_model, daemon=True)
         thread.start()
 
     def build(self) -> None:
+        if self.model_builder_failed:
+            return
+
         if not self.landmark_detector:
             self.init_landmark_detector()
             return None
 
         if self.model_builder_queue is not None:
             try:
-                face_embeddings_map: dict[str, list[np.ndarray]] = (
+                face_embeddings_map: dict[str, list[np.ndarray]] | None = (
                     self.model_builder_queue.get(timeout=0.1)
                 )
                 self.model_builder_queue = None
@@ -388,6 +402,10 @@ class ArcFaceRecognizer(FaceRecognizer):
                 return
         else:
             self.run_build_task()
+            return
+
+        if face_embeddings_map is None:
+            self.model_builder_failed = True
             return
 
         if not face_embeddings_map:
@@ -416,7 +434,7 @@ class ArcFaceRecognizer(FaceRecognizer):
 
         # align face and run recognition
         img = self.align_face(face_image, face_image.shape[1], face_image.shape[0])
-        embedding = self.face_embedder([img])[0].squeeze()  # type: ignore[arg-type]
+        embedding = self.face_embedder([img])[0].squeeze()
 
         score: float = 0
         label = ""

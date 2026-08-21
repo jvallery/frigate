@@ -1,5 +1,6 @@
 """Handle communication between Frigate and other applications."""
 
+import copy
 import datetime
 import json
 import logging
@@ -36,6 +37,10 @@ from frigate.const import (
     UPDATE_MODEL_STATE,
     UPDATE_REVIEW_DESCRIPTION,
     UPSERT_REVIEW_SEGMENT,
+)
+from frigate.data_processing.post.description_recovery import (
+    ConditionalWriteResult,
+    persist_review_metadata,
 )
 from frigate.models import Event, Previews, Recordings, ReviewSegment
 from frigate.ptz.onvif import OnvifCommandEnum, OnvifController
@@ -186,29 +191,73 @@ class Dispatcher:
         def handle_expire_audio_activity() -> None:
             self.audio_activity.expire_all(payload)
 
-        def handle_update_event_description() -> None:
-            event: Event = Event.get(Event.id == payload["id"])
-            cast(dict, event.data)["description"] = payload["description"]
-            event.save()
-            self.publish(
-                "tracked_object_update",
-                json.dumps(
-                    {
-                        "type": TrackedObjectUpdateTypesEnum.description,
-                        "id": event.id,
-                        "description": event.data["description"],
-                        "camera": event.camera,
-                    }
-                ),
-            )
+        def handle_update_event_description() -> dict[str, str]:
+            try:
+                event: Event = Event.get(Event.id == payload["id"])
+                cast(dict, event.data)["description"] = payload["description"]
+                event.save()
+                self.publish(
+                    "tracked_object_update",
+                    json.dumps(
+                        {
+                            "type": TrackedObjectUpdateTypesEnum.description,
+                            "id": event.id,
+                            "description": event.data["description"],
+                            "camera": event.camera,
+                        }
+                    ),
+                )
+                return {"status": ConditionalWriteResult.written.value}
+            except Exception as error:
+                logger.warning(
+                    "Object description persistence failed (%s)",
+                    type(error).__name__,
+                )
+                return {"status": ConditionalWriteResult.failed.value}
 
-        def handle_update_review_description() -> None:
-            final_data = payload["after"]
-            ReviewSegment.insert(final_data).on_conflict(
-                conflict_target=[ReviewSegment.id],
-                update=final_data,
-            ).execute()
-            self.publish("reviews", json.dumps(payload))
+        def handle_update_review_description() -> dict[str, str]:
+            try:
+                final_data = payload.get("after", {})
+                final_json = final_data.get("data", {})
+                metadata = final_json.get("metadata")
+                review_id = final_data.get("id")
+                if not review_id or not isinstance(metadata, dict) or not metadata:
+                    return {"status": ConditionalWriteResult.failed.value}
+
+                def serialize_review(review: ReviewSegment) -> dict[str, Any]:
+                    serialized = dict(review.__data__)
+                    serialized["data"] = copy.deepcopy(review.data)
+                    for field in ("start_time", "end_time"):
+                        value = serialized.get(field)
+                        timestamp = getattr(value, "timestamp", None)
+                        if callable(timestamp):
+                            serialized[field] = timestamp()
+                    return serialized
+
+                review = ReviewSegment.get_by_id(review_id)
+                before = serialize_review(review)
+                write_result = persist_review_metadata(review_id, metadata)
+                if write_result == ConditionalWriteResult.failed:
+                    return {"status": write_result.value}
+
+                after = serialize_review(ReviewSegment.get_by_id(review_id))
+                self.publish(
+                    "reviews",
+                    json.dumps(
+                        {
+                            "type": payload.get("type", "genai"),
+                            "before": before,
+                            "after": after,
+                        }
+                    ),
+                )
+                return {"status": write_result.value}
+            except Exception as error:
+                logger.warning(
+                    "Review description persistence failed (%s)",
+                    type(error).__name__,
+                )
+                return {"status": ConditionalWriteResult.failed.value}
 
         def handle_update_model_state() -> None:
             if payload:
