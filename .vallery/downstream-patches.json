@@ -1,0 +1,338 @@
+{
+  "schema_version": 1,
+  "ledger_owner": "jvallery",
+  "selected_upstream": {
+    "repository": "blakeblackshear/frigate",
+    "branch": "dev",
+    "sha": "036bae4ea96f23e564622a3d19c1558254122b2b"
+  },
+  "first_candidate_release": "v0.18.0-vallery.20260820.1",
+  "patches": [
+    {
+      "id": "VLY-FRIGATE-001",
+      "concern": "sqlite_query_indexes",
+      "title": "SQLite query indexes and planner statistics",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "e1b03f1b80c2aca1e8fd47084c5269d41e3cebc9",
+          "patch_id": "5aa36fbf4df979eb122d8660d11c376ca741d72b"
+        },
+        {
+          "sha": "ed89e6391cb7b460813de3ccc386be5f3193d9c6",
+          "patch_id": "a1ed21b2cf79a15aec229df82ee3876caf15b213"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "migrations/036_add_query_indexes.py"
+      ],
+      "tests": [
+        "frigate/test/test_migration_query_indexes.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "additive_schema_indexes",
+      "rollback_class": "image_rollback_safe_indexes_remain",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": "https://github.com/blakeblackshear/frigate/pull/24043"
+      },
+      "retirement_condition": "Retire after an equivalent indexed migration and planner coverage merge into the selected upstream line and production-history upgrade tests pass without this commit."
+    },
+    {
+      "id": "VLY-FRIGATE-002",
+      "concern": "wal_safe_migration_backup",
+      "title": "WAL-safe migration backup",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "d693c05e15617e5c81f374cb830b8529f3f4f371",
+          "patch_id": "ea6c9d67a8c75f3bbf7fcd4d493f9b89c71398e5"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "frigate/app.py",
+        "frigate/db/sqlite_backup.py"
+      ],
+      "tests": [
+        "frigate/test/test_sqlite_backup.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "migration_safety_behavior",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire after upstream migration startup uses SQLite online backup with equivalent WAL consistency and failure tests."
+    },
+    {
+      "id": "VLY-FRIGATE-003",
+      "concern": "bounded_explore_queries",
+      "title": "Bounded Explore event queries",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "0e25373ebaaf6a475935e6ba14bcd9868cf32a50",
+          "patch_id": "c59ea2c91cc41f5096cc239b5b6225c626c10189"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "frigate/api/event.py",
+        "frigate/api/explore_query.py"
+      ],
+      "tests": [
+        "frigate/test/test_explore_query.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "none",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire after upstream bounds the same Explore result set with equivalent authorization, projection, chunking, and regression coverage."
+    },
+    {
+      "id": "VLY-FRIGATE-004",
+      "concern": "bounded_recording_days",
+      "title": "Bounded recording-day summaries",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "9fc086d58fca5526b2508a83018ae1eaf8495a06",
+          "patch_id": "d429cd3cc6a28a15907eac69d1e4f2f70bf1ffad"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "frigate/api/record.py",
+        "frigate/api/recording_days.py"
+      ],
+      "tests": [
+        "frigate/test/test_recording_days.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "none",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire after upstream replaces unbounded recording-day aggregation with equivalent indexed per-camera/day probes and tests."
+    },
+    {
+      "id": "VLY-FRIGATE-005",
+      "concern": "bounded_review_summaries",
+      "title": "Bounded Review summary joins",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "996d022f20af8f548e647e0a9655e5dde4695bf5",
+          "patch_id": "bb7d06ead1fe7dfb4c77220f1ac5f5c40e78ab96"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "frigate/api/review.py",
+        "frigate/api/review_summary_query.py"
+      ],
+      "tests": [
+        "frigate/test/test_review_summary_query.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "none",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire after upstream avoids the all-row user-status join while preserving summary semantics and regression coverage."
+    },
+    {
+      "id": "VLY-FRIGATE-006",
+      "concern": "metrics_endpoint_concurrency",
+      "title": "Serialized metrics collector snapshots",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "ffcd143bf5e4672b5e0974c4e8637d6334e7d27b",
+          "patch_id": "6575af033dec98c50a97a1d7b20ee7f4831b9c65"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "frigate/api/app.py",
+        "frigate/stats/metrics_endpoint_guard.py"
+      ],
+      "tests": [
+        "frigate/test/test_metrics_endpoint_guard.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "none",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire after upstream serializes collector mutation and rendering, rejects concurrent scrapes without queueing, and proves failure recovery."
+    },
+    {
+      "id": "VLY-FRIGATE-007",
+      "concern": "chat_image_limits",
+      "title": "Bounded Chat and provider image inputs",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "9d485d82bc348e36743fcd06e3fdc2e864169a92",
+          "patch_id": "6c37932e8318d9f0ddd61e378b24dd7a95024a58"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "frigate/api/chat.py",
+        "frigate/genai/image_limit.py",
+        "frigate/genai/plugins/openai.py"
+      ],
+      "tests": [
+        "frigate/test/test_genai_image_limit.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "none",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire after every upstream image-bearing Chat and OpenAI-compatible request enforces an equivalent immutable newest-ten ceiling."
+    },
+    {
+      "id": "VLY-FRIGATE-008",
+      "concern": "genai_description_resilience",
+      "title": "Bounded and recoverable GenAI description work",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "50062a3f06335f80952b16f98d0312cfc7c6b1c5",
+          "patch_id": "114e923796cda41da63c13338e0cba9bba5b0a2f"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "frigate/comms/dispatcher.py",
+        "frigate/data_processing/post/description_recovery.py",
+        "frigate/data_processing/post/description_work_queue.py",
+        "frigate/data_processing/post/object_descriptions.py",
+        "frigate/data_processing/post/review_descriptions.py",
+        "frigate/data_processing/types.py",
+        "frigate/embeddings/maintainer.py",
+        "frigate/genai/plugins/openai.py",
+        "frigate/genai/request_outcome.py",
+        "frigate/stats/prometheus.py",
+        "frigate/stats/util.py"
+      ],
+      "tests": [
+        "frigate/test/test_description_recovery.py",
+        "frigate/test/test_description_work_queue.py",
+        "frigate/test/test_genai_request_outcomes.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "none",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire after upstream provides equivalent bounded admission, typed retry outcomes, restart recovery, processor refresh, and queue telemetry."
+    },
+    {
+      "id": "VLY-FRIGATE-009",
+      "concern": "arcface_cuda_recovery",
+      "title": "Serialized bounded ArcFace CUDA recovery",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "44c054cbf8fd5abd6489fb4529a00bd2f6d7bc5d",
+          "patch_id": "0e7877509b8359f06abb2ee481f58e5a2701a24d"
+        }
+      ],
+      "disposition": "intentionally_local",
+      "affected_files": [
+        "frigate/data_processing/common/face/model.py",
+        "frigate/detectors/detection_runners.py",
+        "frigate/embeddings/onnx/arcface_gpu_retry.py",
+        "frigate/embeddings/onnx/face_embedding.py"
+      ],
+      "tests": [
+        "frigate/test/test_arcface_gpu_retry.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "none",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire only after upstream supplies equivalent serialized bounded CUDA recovery and Vallery no longer requires the CUDA-only no-CPU-fallback production policy."
+    },
+    {
+      "id": "VLY-FRIGATE-010",
+      "concern": "production_migration_history",
+      "title": "Production migration-history compatibility marker",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "036bae4ea96f23e564622a3d19c1558254122b2b",
+      "local_commits": [
+        {
+          "sha": "ede84bafd0e336c1e06eb984ea7c508c40dd3e69",
+          "patch_id": "b8e22501c013f5ab129b06819f1b168a5607588b"
+        }
+      ],
+      "disposition": "intentionally_local",
+      "affected_files": [
+        "migrations/900_performance_indexes.py"
+      ],
+      "tests": [
+        "frigate/test/test_migration_900_compatibility.py"
+      ],
+      "first_release": "v0.18.0-vallery.20260820.1",
+      "migration_class": "history_compatibility_noop",
+      "rollback_class": "required_for_existing_history_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Do not retire until production migration-history normalization is explicitly designed, exercised on a consistent snapshot, and deployed with an exact inverse procedure."
+    }
+  ]
+}
