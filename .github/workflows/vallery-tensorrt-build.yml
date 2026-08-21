@@ -154,7 +154,7 @@ jobs:
           done
           docker buildx create --name vallery-job --driver remote "${BUILDKIT_HOST}" --use
           docker buildx inspect --bootstrap
-          docker version --format '{{.Client.Version}}'
+          docker --version
           docker buildx version
           buildctl --version
 
