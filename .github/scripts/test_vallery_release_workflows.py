@@ -48,10 +48,10 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             INPUTS.release_key("v0.18.0-vallery.20260820.0")
 
-    def test_privileged_workflow_is_dispatch_or_call_only_and_protected(self) -> None:
+    def test_privileged_workflow_is_reusable_call_only_and_protected(self) -> None:
         body = BUILD_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("workflow_call:", body)
-        self.assertIn("workflow_dispatch:", body)
+        self.assertNotIn("workflow_dispatch:", body)
         self.assertNotIn("pull_request_target", body.split("permissions:", 1)[0])
         self.assertNotIn("\n  pull_request:", body)
         self.assertEqual(body.count("runs-on: build-trusted"), 1)
@@ -127,6 +127,8 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         self.assertIn("automation/patch-retirement-", body)
         self.assertIn("--apply-plan", body)
         self.assertIn("marks matches as upstreamed, not retired", body)
+        self.assertIn("--force-with-lease=", body)
+        self.assertIn("--state open", body)
         self.assertNotIn("repos/blakeblackshear/frigate", body)
 
     def test_bake_group_contains_exact_release_variants(self) -> None:

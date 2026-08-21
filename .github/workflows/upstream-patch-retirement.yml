@@ -76,8 +76,26 @@ jobs:
           [[ "${UPSTREAM_TIP}" =~ ^[0-9a-f]{40}$ ]]
           branch="automation/patch-retirement-${UPSTREAM_TIP:0:12}"
           plan="${RUNNER_TEMP}/patch-retirement/plan.json"
+          open_pr_count="$(gh pr list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --head "${branch}" \
+            --base vallery/prod \
+            --state open \
+            --json number \
+            --jq 'length')"
+          if [[ "${open_pr_count}" != "0" ]]; then
+            echo "Existing open retirement candidate already owns ${branch}; no branch rewrite needed."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh auth setup-git
+          remote_tip="$(git ls-remote --heads origin "refs/heads/${branch}" | awk '{print $1}')"
+          if [[ -n "${remote_tip}" ]]; then
+            [[ "${remote_tip}" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags origin \
+              "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+          fi
           git switch --force-create "${branch}" refs/remotes/origin/vallery/prod
           if ! git merge --no-ff --no-edit "${UPSTREAM_TIP}"; then
             git merge --abort
@@ -89,8 +107,13 @@ jobs:
           python3 .github/scripts/verify_downstream_patch_ledger.py
           git add .vallery/downstream-patches.json
           git commit -m "chore(upstream): record exact upstream patch matches"
-          gh auth setup-git
-          git push --set-upstream origin "${branch}"
+          if [[ -n "${remote_tip}" ]]; then
+            git push \
+              --force-with-lease="refs/heads/${branch}:${remote_tip}" \
+              --set-upstream origin "${branch}"
+          else
+            git push --set-upstream origin "${branch}"
+          fi
 
           candidate_list="$(jq -r '.candidates[] | "- `" + .patch_id + "` (`" + .concern + "`): " + ([.matches[].upstream_commit] | join(", "))' "${plan}")"
           body="$(printf '%s\n' \
@@ -101,7 +124,7 @@ jobs:
             "This PR records the selected upstream base and marks matches as upstreamed, not retired. Duplicate downstream ownership must remain until the source, image, private preflight, production rollout, soak, and rollback gates prove the upstream implementation. No upstream issue, PR, discussion, review, or comment was written by this workflow." \
             "" \
             "Evidence: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")"
-          if ! gh pr view "${branch}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+          if [[ "$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" --base vallery/prod --state open --json number --jq 'length')" == "0" ]]; then
             gh pr create \
               --repo "${GITHUB_REPOSITORY}" \
               --base vallery/prod \

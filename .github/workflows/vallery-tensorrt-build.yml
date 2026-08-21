@@ -22,21 +22,6 @@ on:
         value: ${{ jobs.build.outputs.tensorrt_digest }}
       manifest_sha256:
         value: ${{ jobs.build.outputs.manifest_sha256 }}
-  workflow_dispatch:
-    inputs:
-      source_sha:
-        description: Exact protected vallery/prod commit to build
-        required: true
-        type: string
-      upstream_sha:
-        description: Exact reviewed upstream commit carried by the fork
-        required: true
-        type: string
-      release_id:
-        description: Immutable Vallery release identifier
-        required: true
-        type: string
-
 permissions:
   contents: read
   packages: write
