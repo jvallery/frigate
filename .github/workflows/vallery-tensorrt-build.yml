@@ -195,8 +195,10 @@ jobs:
             --provenance mode=max \
             --sbom true \
             --metadata-file "${RUNNER_TEMP}/build-metadata.json" \
-            --set "vallery-standard.tags=${standard_ghcr},${standard_zot}" \
-            --set "tensorrt.tags=${tensorrt_ghcr},${tensorrt_zot}" \
+            --set "vallery-standard.tags=${standard_ghcr}" \
+            --set "vallery-standard.tags+=${standard_zot}" \
+            --set "tensorrt.tags=${tensorrt_ghcr}" \
+            --set "tensorrt.tags+=${tensorrt_zot}" \
             --set "*.labels.org.opencontainers.image.revision=${SOURCE_SHA}" \
             --set "*.labels.org.opencontainers.image.version=${RELEASE_ID}" \
             --set "*.labels.net.vallery.frigate.upstream-sha=${UPSTREAM_SHA}" \
