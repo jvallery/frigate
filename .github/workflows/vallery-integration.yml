@@ -60,6 +60,10 @@ jobs:
           python3 -m json.tool .vallery/upstream-policy.json >/dev/null
           test "$(jq -r .upstream_repository .vallery/upstream-policy.json)" = "blakeblackshear/frigate"
           test "$(jq -r '.mirror_branches | join(",")' .vallery/upstream-policy.json)" = "dev,0.19"
+      - name: Verify downstream patch ledger freshness
+        run: |
+          python3 .github/scripts/test_verify_downstream_patch_ledger.py
+          python3 .github/scripts/verify_downstream_patch_ledger.py
 
   trust-boundary:
     name: Public runner trust boundary
