@@ -478,6 +478,40 @@ def stats_snapshot(
                 embeddings_metrics.object_desc_dps.value, 2
             )
 
+        queue_metrics = dict(embeddings_metrics.genai_description_queue)
+        outcomes = (
+            "queued",
+            "attempted",
+            "successful",
+            "empty",
+            "timeout",
+            "provider_error",
+            "provider_unavailable",
+            "invalid_response",
+            "persistence_error",
+            "invalid_input",
+            "internal_error",
+            "retried",
+            "rejected",
+            "failed",
+            "cancelled",
+            "pending",
+            "active",
+        )
+        stats["embeddings"]["genai_description_queue"] = {
+            "queue_capacity": int(queue_metrics.get("queue_capacity", 0)),
+            "active_limit": int(queue_metrics.get("active_limit", 0)),
+            "pending": int(queue_metrics.get("pending", 0)),
+            "active": int(queue_metrics.get("active", 0)),
+            **{
+                surface: {
+                    outcome: int(queue_metrics.get(f"{surface}_{outcome}", 0))
+                    for outcome in outcomes
+                }
+                for surface in ("object", "review")
+            },
+        }
+
         for key in embeddings_metrics.classification_speeds.keys():
             stats["embeddings"][f"{key}_classification_speed"] = round(
                 embeddings_metrics.classification_speeds[key].value * 1000, 2

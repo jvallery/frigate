@@ -3,7 +3,6 @@
 import datetime
 import logging
 import os
-import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,9 +13,23 @@ from peewee import DoesNotExist
 from frigate.comms.inter_process import InterProcessRequestor
 from frigate.config import CameraConfig, FrigateConfig
 from frigate.const import CLIPS_DIR, UPDATE_EVENT_DESCRIPTION
+from frigate.data_processing.post.description_recovery import (
+    ConditionalWriteResult,
+    RecoveryAdmission,
+    dispatcher_write_succeeded,
+    persist_object_description,
+)
+from frigate.data_processing.post.description_work_queue import (
+    DescriptionWorkQueue,
+)
 from frigate.data_processing.post.semantic_trigger import SemanticTriggerProcessor
 from frigate.data_processing.types import PostProcessDataEnum
 from frigate.genai.manager import GenAIClientManager
+from frigate.genai.request_outcome import (
+    AttemptOutcome,
+    consume_outcome,
+    reset_outcome,
+)
 from frigate.models import Event
 from frigate.types import TrackedObjectUpdateTypesEnum
 from frigate.util.builtin import EventsPerSecond, InferenceSpeed
@@ -43,6 +56,7 @@ class ObjectDescriptionProcessor(PostProcessorApi):
         metrics: DataProcessorMetrics,
         genai_manager: GenAIClientManager,
         semantic_trigger_processor: SemanticTriggerProcessor | None,
+        description_queue: DescriptionWorkQueue,
     ):
         super().__init__(config, metrics, None)
         self.config = config
@@ -51,6 +65,8 @@ class ObjectDescriptionProcessor(PostProcessorApi):
         self.metrics = metrics
         self.genai_manager = genai_manager
         self.semantic_trigger_processor = semantic_trigger_processor
+        self.description_queue = description_queue
+        self.description_recovery = None
         self.tracked_events: dict[str, list[Any]] = {}
         self.early_request_sent: dict[str, bool] = {}
         self.object_desc_speed = InferenceSpeed(self.metrics.object_desc_speed)
@@ -111,15 +127,7 @@ class ObjectDescriptionProcessor(PostProcessorApi):
                             for data in self.tracked_events[data["id"]]
                             if data.get("thumbnail")
                         ]
-                        threading.Thread(
-                            target=self._genai_embed_description,
-                            name=f"_genai_embed_description_{event.id}",
-                            daemon=True,
-                            args=(
-                                event,
-                                thumbnails_copy,
-                            ),
-                        ).start()
+                        self._submit_description(event, thumbnails_copy)
 
     def __handle_frame_finalize(
         self, camera: str, event: Event, thumbnail: bytes
@@ -189,18 +197,13 @@ class ObjectDescriptionProcessor(PostProcessorApi):
             )
         )
 
-        self._genai_embed_description(
-            event, [img for img in embed_image if img is not None]
-        )
+        self._submit_description(event, [img for img in embed_image if img is not None])
 
     def process_data(self, frame_data: dict, data_type: PostProcessDataEnum) -> None:
         """Process a frame update."""
         self.metrics.object_desc_dps.value = self.object_desc_dps.eps()
 
         if data_type != PostProcessDataEnum.tracked_object:
-            return
-
-        if self.genai_manager.description_client is None:
             return
 
         state: str | None = frame_data.get("state", None)
@@ -318,66 +321,206 @@ class ObjectDescriptionProcessor(PostProcessorApi):
                     ) as j:
                         j.write(jpg_bytes)
 
-        # Generate the description. Call happens in a thread since it is network bound.
-        threading.Thread(
-            target=self._genai_embed_description,
-            name=f"_genai_embed_description_{event_id}",
-            daemon=True,
-            args=(
-                event,
-                embed_image,
-            ),
-        ).start()
+        # The shared bounded worker owns all description provider calls.
+        self._submit_description(event, [img for img in embed_image if img is not None])
 
         # Clean up tracked events and early request state
         self.cleanup_event(event_id)
 
-    def _genai_embed_description(self, event: Event, thumbnails: list[bytes]) -> None:
-        """Embed the description for an event."""
-        start = datetime.datetime.now().timestamp()
-        camera_config = self.config.cameras[str(event.camera)]
-        client = self.genai_manager.description_client
+    def _record_live_failure(
+        self,
+        event_id: Any,
+        outcome: AttemptOutcome,
+    ) -> None:
+        if outcome != AttemptOutcome.success and self.description_recovery is not None:
+            self.description_recovery.note_live_failure("object", event_id)
 
-        if client is None:
-            return
+    def _submit_description(
+        self,
+        event: Event,
+        thumbnails: list[bytes],
+        recovery: bool = False,
+        on_complete: Any | None = None,
+    ) -> bool:
+        """Freeze media and submit one idempotent job to the shared queue."""
+        frozen_thumbnails = tuple(bytes(image) for image in thumbnails if image)
+        state: dict[str, str] = {}
+        completion_callback = on_complete
+        if completion_callback is None and not recovery:
 
-        description = client.generate_object_description(
-            camera_config, thumbnails, event
+            def record_failure(outcome: AttemptOutcome) -> None:
+                self._record_live_failure(event.id, outcome)
+
+            completion_callback = record_failure
+        submitter = (
+            self.description_queue.submit_recovery
+            if recovery
+            else self.description_queue.submit
         )
-
-        if not description:
-            logger.debug("Failed to generate description for %s", event.id)
-            return
-
-        # fire and forget description update
-        self.requestor.send_data(
-            UPDATE_EVENT_DESCRIPTION,
-            {
-                "type": TrackedObjectUpdateTypesEnum.description,
-                "id": event.id,
-                "description": description,
-                "camera": event.camera,
-            },
+        accepted = submitter(
+            "object",
+            lambda worker_requestor: self._genai_embed_description(
+                event,
+                frozen_thumbnails,
+                worker_requestor,
+                recovery,
+                state,
+            ),
+            on_complete=completion_callback,
         )
+        if not accepted and not recovery and self.description_recovery is not None:
+            self.description_recovery.note_live_failure("object", event.id)
+        return accepted
 
-        # Embed the description
-        if self.config.semantic_search.enabled:
-            self.embeddings.embed_description(str(event.id), description)
-
-            # Check semantic trigger for this description
-            if self.semantic_trigger_processor is not None:
-                self.semantic_trigger_processor.process_data(
-                    {"event_id": event.id, "camera": event.camera, "type": "text"},
-                    PostProcessDataEnum.tracked_object,
+    def submit_recovery(
+        self,
+        event: Event,
+        on_complete: Any,
+    ) -> RecoveryAdmission:
+        """Submit one eligible missing object description without notifications."""
+        try:
+            event = Event.get_by_id(event.id)
+            camera_config = self.config.cameras.get(str(event.camera))
+            data = event.data if isinstance(event.data, dict) else {}
+            if (
+                camera_config is None
+                or not camera_config.objects.genai.enabled
+                or not camera_config.objects.genai.send_triggers.tracked_object_end
+                or (data.get("description") or "").strip()
+                or (
+                    camera_config.objects.genai.objects
+                    and event.label not in camera_config.objects.genai.objects
                 )
+                or (
+                    camera_config.objects.genai.required_zones
+                    and not set(event.zones)
+                    & set(camera_config.objects.genai.required_zones)
+                )
+            ):
+                return RecoveryAdmission.terminal_skip
 
-        # Update inference timing metrics
-        self.object_desc_speed.update(datetime.datetime.now().timestamp() - start)
-        self.object_desc_dps.update()
+            thumbnail = get_event_thumbnail_bytes(event)
+            if thumbnail is None:
+                return RecoveryAdmission.retry_later
+            thumbnail = ensure_jpeg_bytes(thumbnail)
+            images = [thumbnail]
+            if event.has_snapshot and camera_config.objects.genai.use_snapshot:
+                snapshot = self._read_and_crop_snapshot(event)
+                if snapshot is None:
+                    return RecoveryAdmission.retry_later
+                images = [snapshot]
+            return (
+                RecoveryAdmission.accepted
+                if self._submit_description(
+                    event,
+                    images,
+                    recovery=True,
+                    on_complete=on_complete,
+                )
+                else RecoveryAdmission.retry_later
+            )
+        except Exception as error:
+            logger.warning(
+                "Object description recovery candidate skipped (%s)",
+                type(error).__name__,
+            )
+            return RecoveryAdmission.retry_later
 
-        logger.debug(
-            "Generated description for %s (%d images): %s",
-            event.id,
-            len(thumbnails),
-            description,
-        )
+    def _genai_embed_description(
+        self,
+        event: Event,
+        thumbnails: tuple[bytes, ...],
+        requestor: InterProcessRequestor,
+        recovery: bool,
+        state: dict[str, str],
+    ) -> AttemptOutcome:
+        """Run one retryable object generation or persistence attempt."""
+        if not thumbnails:
+            return AttemptOutcome.invalid_input
+
+        start = datetime.datetime.now().timestamp()
+        try:
+            if recovery:
+                event = Event.get_by_id(event.id)
+                data = event.data if isinstance(event.data, dict) else {}
+                if (data.get("description") or "").strip():
+                    return AttemptOutcome.success
+
+            description = state.get("description")
+            if description is None:
+                client = self.genai_manager.description_client
+                if client is None:
+                    return AttemptOutcome.provider_unavailable
+                camera_config = self.config.cameras[str(event.camera)]
+                reset_outcome()
+                try:
+                    generated = client.generate_object_description(
+                        camera_config, list(thumbnails), event
+                    )
+                except Exception:
+                    return AttemptOutcome.internal_error
+                provider_outcome = consume_outcome()
+                if not generated or not generated.strip():
+                    return (
+                        AttemptOutcome.empty
+                        if provider_outcome == AttemptOutcome.success
+                        else provider_outcome
+                    )
+                description = generated.strip()
+                state["description"] = description
+
+            try:
+                if recovery:
+                    write_result = persist_object_description(
+                        str(event.id), description
+                    )
+                    if write_result == ConditionalWriteResult.already_present:
+                        return AttemptOutcome.success
+                    persisted = write_result == ConditionalWriteResult.written
+                else:
+                    response = requestor.send_data(
+                        UPDATE_EVENT_DESCRIPTION,
+                        {
+                            "type": TrackedObjectUpdateTypesEnum.description,
+                            "id": event.id,
+                            "description": description,
+                            "camera": event.camera,
+                        },
+                    )
+                    persisted = dispatcher_write_succeeded(response)
+            except Exception:
+                persisted = False
+            if not persisted:
+                return AttemptOutcome.persistence_error
+
+            if self.config.semantic_search.enabled and self.embeddings is not None:
+                try:
+                    self.embeddings.embed_description(str(event.id), description)
+                    if not recovery and self.semantic_trigger_processor is not None:
+                        self.semantic_trigger_processor.process_data(
+                            {
+                                "event_id": event.id,
+                                "camera": event.camera,
+                                "type": "text",
+                            },
+                            PostProcessDataEnum.tracked_object,
+                        )
+                except Exception as error:
+                    logger.warning(
+                        "Object description embedding failed (%s)",
+                        type(error).__name__,
+                    )
+
+            self.object_desc_speed.update(datetime.datetime.now().timestamp() - start)
+            self.object_desc_dps.update()
+            logger.debug(
+                "Generated object description (%d images, recovery=%s)",
+                len(thumbnails),
+                recovery,
+            )
+            return AttemptOutcome.success
+        except Exception as error:
+            logger.warning(
+                "Object description attempt failed (%s)", type(error).__name__
+            )
+            return AttemptOutcome.internal_error
