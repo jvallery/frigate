@@ -1,0 +1,190 @@
+name: Vallery upstream sync
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate without moving mirrors or creating intake
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: vallery-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Verify and advance mirrors
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM_REPOSITORY: blakeblackshear/frigate
+      UPSTREAM_URL: https://github.com/blakeblackshear/frigate.git
+    steps:
+      - name: Check out reviewed sync controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: vallery/prod
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Fetch fixed mirror refs without executing source
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/upstream-evidence"
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream "${UPSTREAM_URL}"
+          git fetch --no-tags upstream \
+            +refs/heads/dev:refs/remotes/upstream/dev \
+            +refs/heads/0.19:refs/remotes/upstream/0.19
+          git fetch --no-tags origin \
+            +refs/heads/dev:refs/remotes/origin/dev \
+            +refs/heads/0.19:refs/remotes/origin/0.19 \
+            +refs/heads/vallery/prod:refs/remotes/origin/vallery/prod
+
+      - name: Classify, attest, and advance fast-forward mirrors
+        id: mirrors
+        env:
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          set -euo pipefail
+          moved_dev=""
+          for branch in dev 0.19; do
+            old_sha="$(git rev-parse "refs/remotes/origin/${branch}")"
+            new_sha="$(git rev-parse "refs/remotes/upstream/${branch}")"
+            [[ "${old_sha}" =~ ^[0-9a-f]{40}$ ]]
+            [[ "${new_sha}" =~ ^[0-9a-f]{40}$ ]]
+
+            evidence="${RUNNER_TEMP}/upstream-evidence/${branch//./-}.json"
+            if [[ "${old_sha}" == "${new_sha}" ]]; then
+              jq -n \
+                --arg branch "${branch}" \
+                --arg old_sha "${old_sha}" \
+                --arg new_sha "${new_sha}" \
+                '{schema_version:1, branch:$branch, old_sha:$old_sha, new_sha:$new_sha, state:"already-current"}' \
+                > "${evidence}"
+              continue
+            fi
+
+            python3 .github/scripts/verify_mirror_update.py \
+              --repo . --old "${old_sha}" --new "${new_sha}"
+
+            classification="${RUNNER_TEMP}/upstream-evidence/${branch//./-}-classification.json"
+            python3 .github/scripts/classify_upstream_changes.py \
+              --repo . \
+              --base "${old_sha}" \
+              --head "${new_sha}" \
+              --output "${classification}"
+
+            ci_success="$(gh api --method GET "repos/${UPSTREAM_REPOSITORY}/actions/runs" \
+              -f head_sha="${new_sha}" -f branch="${branch}" -f status=completed -f per_page=100 \
+              --jq '[.workflow_runs[] | select(.name == "CI") | .conclusion] | any(. == "success")')"
+            if [[ "${ci_success}" != "true" ]]; then
+              echo "::error::upstream ${branch}@${new_sha} has no successful completed CI run"
+              exit 21
+            fi
+
+            short_sha="${new_sha:0:7}"
+            registry_token="$(curl --fail --silent --show-error \
+              "https://ghcr.io/token?scope=repository:blakeblackshear/frigate:pull" | jq -r .token)"
+            [[ -n "${registry_token}" && "${registry_token}" != "null" ]]
+            for tag in "${short_sha}" "${short_sha}-tensorrt"; do
+              curl --fail --silent --show-error --head \
+                -H "Authorization: Bearer ${registry_token}" \
+                -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json" \
+                "https://ghcr.io/v2/blakeblackshear/frigate/manifests/${tag}" >/dev/null
+            done
+
+            jq -n \
+              --arg branch "${branch}" \
+              --arg old_sha "${old_sha}" \
+              --arg new_sha "${new_sha}" \
+              --argjson classification "$(<"${classification}")" \
+              '{schema_version:1, branch:$branch, old_sha:$old_sha, new_sha:$new_sha, state:"verified-fast-forward", upstream_ci:"success", required_artifacts:[($new_sha[0:7]), (($new_sha[0:7]) + "-tensorrt")], classification:$classification}' \
+              > "${evidence}"
+
+            if [[ "${DRY_RUN}" == "true" ]]; then
+              continue
+            fi
+
+            git push origin "${new_sha}:refs/heads/${branch}"
+            gh workflow run vallery-integration.yml \
+              --repo "${GITHUB_REPOSITORY}" \
+              --ref vallery/prod \
+              -f source_sha="${new_sha}" \
+              -f source_branch="${branch}" \
+              -f upstream_sha="${new_sha}"
+            if [[ "${branch}" == "dev" ]]; then
+              moved_dev="${new_sha}"
+            fi
+          done
+          echo "moved_dev=${moved_dev}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create one reviewed upstream intake PR
+        if: steps.mirrors.outputs.moved_dev != '' && inputs.dry_run != true
+        env:
+          UPSTREAM_SHA: ${{ steps.mirrors.outputs.moved_dev }}
+        run: |
+          set -euo pipefail
+          [[ "${UPSTREAM_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          intake_branch="automation/intake-${UPSTREAM_SHA:0:12}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --force-create "${intake_branch}" refs/remotes/origin/vallery/prod
+          if ! git merge --no-ff --no-edit "${UPSTREAM_SHA}"; then
+            git merge --abort
+            echo "::error::upstream intake conflicts with vallery/prod"
+            exit 22
+          fi
+          git push --set-upstream origin "${intake_branch}"
+
+          while read -r number; do
+            [[ -z "${number}" ]] && continue
+            existing_head="$(gh pr view "${number}" --repo "${GITHUB_REPOSITORY}" --json headRefName --jq .headRefName)"
+            if [[ "${existing_head}" != "${intake_branch}" ]]; then
+              gh pr close "${number}" --repo "${GITHUB_REPOSITORY}" --comment "Superseded by exact upstream intake ${UPSTREAM_SHA}."
+            fi
+          done < <(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --search "head:automation/intake-" --json number --jq '.[].number')
+
+          if ! gh pr view "${intake_branch}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --base vallery/prod \
+              --head "${intake_branch}" \
+              --title "chore(upstream): intake dev@${UPSTREAM_SHA:0:12}" \
+              --body "Exact fast-forward upstream dev intake for \`${UPSTREAM_SHA}\`. Mirror movement, upstream CI, required GHCR artifacts, and changed-path classification passed before this PR was created. Merge remains gated by upstream-parity and Vallery integration checks."
+          fi
+
+      - name: Upload immutable sync evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: upstream-sync-${{ github.run_id }}
+          path: ${{ runner.temp }}/upstream-evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Open or update the internal failure issue
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="[automation] Frigate upstream sync failed"
+          body="The fail-closed upstream sync rejected a mirror update. Inspect ${RUN_URL}. Production and vallery/prod were not changed by this failure."
+          number="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --search "${title} in:title" --json number,title --jq ".[] | select(.title == \"${title}\") | .number" | head -1)"
+          if [[ -n "${number}" ]]; then
+            gh issue comment "${number}" --repo "${GITHUB_REPOSITORY}" --body "${body}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body "${body}"
+          fi

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "upstream_repository": "blakeblackshear/frigate",
+  "mirror_branches": [
+    "dev",
+    "0.19"
+  ],
+  "patch_sensitive_paths": [
+    "frigate/api/fastapi_app.py",
+    "frigate/api/defs/query/*.py",
+    "frigate/api/defs/request/*.py",
+    "frigate/api/defs/response/*.py",
+    "frigate/api/preview.py",
+    "frigate/api/review.py",
+    "frigate/api/timeline.py",
+    "frigate/comms/metrics.py",
+    "frigate/embeddings/onnx/face_embedding.py",
+    "frigate/genai/**",
+    "frigate/models.py",
+    "migrations/**"
+  ],
+  "required_upstream_artifact_variants": [
+    "standard",
+    "tensorrt"
+  ]
+}
