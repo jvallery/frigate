@@ -102,10 +102,25 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
     def test_release_dispatch_is_sentinel_scoped(self) -> None:
         body = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("repositories: sentinel", body)
-        self.assertIn("repos/jvallery/sentinel/dispatches", body)
-        self.assertIn('event_type:"frigate-release"', body)
+        self.assertIn("permission-actions: write", body)
+        self.assertIn("permission-contents: read", body)
+        self.assertIn("/installation/repositories", body)
+        self.assertIn('test "${repositories}" = "jvallery/sentinel"', body)
+        self.assertIn(
+            "repos/jvallery/sentinel/actions/workflows/frigate-promotion.yml/dispatches",
+            body,
+        )
+        self.assertNotIn("repos/jvallery/sentinel/dispatches", body)
+        self.assertNotIn('event_type:"frigate-release"', body)
         self.assertNotIn("KUBECONFIG", body)
         self.assertNotIn("kubectl", body)
+
+    def test_failed_dispatch_can_reuse_only_byte_identical_release_assets(self) -> None:
+        body = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("reusing exact immutable release assets", body)
+        self.assertIn('test "${actual}" = "${expected}"', body)
+        self.assertIn('cmp "release-evidence/${name}"', body)
+        self.assertNotIn("--clobber", body)
 
     def test_release_ids_are_immutable_before_build_or_asset_publication(self) -> None:
         body = RELEASE_WORKFLOW.read_text(encoding="utf-8")
@@ -151,7 +166,30 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
             metadata_path = root / "metadata.json"
             ledger_path = root / "ledger.json"
             metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
-            ledger_path.write_text("{}\n", encoding="utf-8")
+            ledger_path.write_text(
+                json.dumps(
+                    {
+                        "patches": [
+                            {
+                                "id": "VLY-TEST-001",
+                                "status": "candidate",
+                                "affected_files": ["migrations/036_add_query_indexes.py"],
+                                "migration_class": "additive_schema_indexes",
+                                "rollback_class": "image_rollback_safe_indexes_remain",
+                            },
+                            {
+                                "id": "VLY-TEST-002",
+                                "status": "candidate",
+                                "affected_files": ["migrations/900_performance_indexes.py"],
+                                "migration_class": "history_compatibility_noop",
+                                "rollback_class": "required_for_existing_history_image_rollback_safe",
+                            },
+                        ]
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             manifest = MANIFEST.create(
                 Namespace(
                     metadata=metadata_path,
@@ -172,12 +210,18 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         self.assertIn(f"registry.vallery.net/jvallery/frigate@{digest_b}", serialized)
         self.assertNotIn("registry-origin", serialized)
         self.assertFalse(manifest["promotion"]["cluster_mutated_by_build"])
+        self.assertEqual(
+            [row["name"] for row in manifest["migrations"]],
+            ["036_add_query_indexes", "900_performance_indexes"],
+        )
 
     def test_schema_requires_both_variants(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
         self.assertEqual(schema["additionalProperties"], False)
         self.assertEqual(schema["properties"]["source"]["additionalProperties"], False)
         self.assertEqual(schema["properties"]["build"]["additionalProperties"], False)
+        self.assertIn("migrations", schema["required"])
+        self.assertEqual(schema["properties"]["migrations"]["minItems"], 1)
         self.assertEqual(
             schema["properties"]["artifacts"]["required"],
             ["standard-amd64", "tensorrt-amd64"],
