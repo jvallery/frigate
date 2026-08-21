@@ -64,6 +64,11 @@ jobs:
         run: |
           python3 .github/scripts/test_verify_downstream_patch_ledger.py
           python3 .github/scripts/verify_downstream_patch_ledger.py
+      - name: Verify protected release and artifact contracts
+        run: |
+          python3 .github/scripts/test_vallery_release_workflows.py
+          python3 .github/scripts/test_plan_upstream_patch_retirement.py
+          python3 -m json.tool .vallery/release-manifest.schema.json >/dev/null
 
   trust-boundary:
     name: Public runner trust boundary
