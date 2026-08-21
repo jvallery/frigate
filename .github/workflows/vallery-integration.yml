@@ -1,0 +1,77 @@
+name: Vallery integration
+
+on:
+  pull_request:
+    branches:
+      - vallery/prod
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full 40-character fork source SHA
+        required: true
+        type: string
+      source_branch:
+        description: Mirror branch that supplied the source
+        required: true
+        type: choice
+        options:
+          - dev
+          - 0.19
+      upstream_sha:
+        description: Full 40-character upstream source SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vallery-integration-${{ github.event.pull_request.number || inputs.source_sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  source-contract:
+    name: Exact source and classification contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
+      UPSTREAM_SHA: ${{ inputs.upstream_sha || github.event.pull_request.head.sha }}
+    steps:
+      - name: Validate immutable identities
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${UPSTREAM_SHA}" =~ ^[0-9a-f]{40}$ ]]
+      - name: Check out exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+      - name: Test the fail-closed classifier
+        run: |
+          python3 .github/scripts/test_classify_upstream_changes.py
+          python3 .github/scripts/test_verify_mirror_update.py
+      - name: Validate upstream policy
+        run: |
+          python3 -m json.tool .vallery/upstream-policy.json >/dev/null
+          test "$(jq -r .upstream_repository .vallery/upstream-policy.json)" = "blakeblackshear/frigate"
+          test "$(jq -r '.mirror_branches | join(",")' .vallery/upstream-policy.json)" = "dev,0.19"
+
+  trust-boundary:
+    name: Public runner trust boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Prove the untrusted lane has no private authorities
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          test "${RUNNER_ENVIRONMENT}" = "github-hosted"
+          test -z "${KUBECONFIG:-}"
+          test -z "${DOCKER_CONFIG:-}"
+          test "${EVENT_NAME}" != "pull_request_target"

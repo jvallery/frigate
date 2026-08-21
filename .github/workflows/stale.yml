@@ -7,11 +7,16 @@ on:
   schedule:
     - cron: "0 0 * * *" # run stalebot once a day
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 jobs:
   stale:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/stale@main
+      - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # main 2026-08-20
         id: stale
         with:
           stale-issue-message: "This issue has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs. Thank you for your contributions."
@@ -24,7 +29,7 @@ jobs:
           operations-per-run: 120
       - name: Print outputs
         env:
-          STALE_OUTPUT: ${{ join(steps.stale.outputs.*, ',') }}
+          STALE_OUTPUT: ${{ toJSON(steps.stale.outputs) }}
         run: echo "$STALE_OUTPUT"
 
   # clean_ghcr:
