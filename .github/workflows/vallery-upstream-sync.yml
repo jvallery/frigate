@@ -36,7 +36,24 @@ jobs:
         with:
           ref: vallery/prod
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
+
+      - name: Configure the mirror-only deploy identity
+        id: mirror-key
+        if: inputs.dry_run != true
+        env:
+          MIRROR_DEPLOY_KEY: ${{ secrets.VALLERY_MIRROR_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${MIRROR_DEPLOY_KEY}"
+          key_path="${RUNNER_TEMP}/frigate-mirror-deploy-key"
+          known_hosts="${RUNNER_TEMP}/github-known-hosts"
+          printf '%s\n' "${MIRROR_DEPLOY_KEY}" > "${key_path}"
+          chmod 600 "${key_path}"
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' > "${known_hosts}"
+          chmod 600 "${known_hosts}"
+          echo "key_path=${key_path}" >> "${GITHUB_OUTPUT}"
+          echo "known_hosts=${known_hosts}" >> "${GITHUB_OUTPUT}"
 
       - name: Fetch fixed mirror refs without executing source
         run: |
@@ -56,6 +73,8 @@ jobs:
         id: mirrors
         env:
           DRY_RUN: ${{ inputs.dry_run || false }}
+          MIRROR_KEY_PATH: ${{ steps.mirror-key.outputs.key_path }}
+          MIRROR_KNOWN_HOSTS: ${{ steps.mirror-key.outputs.known_hosts }}
         run: |
           set -euo pipefail
           moved_dev=""
@@ -117,7 +136,8 @@ jobs:
               continue
             fi
 
-            git push origin "${new_sha}:refs/heads/${branch}"
+            GIT_SSH_COMMAND="ssh -i ${MIRROR_KEY_PATH} -o IdentitiesOnly=yes -o UserKnownHostsFile=${MIRROR_KNOWN_HOSTS} -o StrictHostKeyChecking=yes" \
+              git push git@github.com:jvallery/frigate.git "${new_sha}:refs/heads/${branch}"
             gh workflow run vallery-integration.yml \
               --repo "${GITHUB_REPOSITORY}" \
               --ref vallery/prod \
@@ -134,6 +154,8 @@ jobs:
         if: steps.mirrors.outputs.moved_dev != '' && inputs.dry_run != true
         env:
           UPSTREAM_SHA: ${{ steps.mirrors.outputs.moved_dev }}
+          MIRROR_KEY_PATH: ${{ steps.mirror-key.outputs.key_path }}
+          MIRROR_KNOWN_HOSTS: ${{ steps.mirror-key.outputs.known_hosts }}
         run: |
           set -euo pipefail
           [[ "${UPSTREAM_SHA}" =~ ^[0-9a-f]{40}$ ]]
@@ -146,7 +168,8 @@ jobs:
             echo "::error::upstream intake conflicts with vallery/prod"
             exit 22
           fi
-          git push --set-upstream origin "${intake_branch}"
+          GIT_SSH_COMMAND="ssh -i ${MIRROR_KEY_PATH} -o IdentitiesOnly=yes -o UserKnownHostsFile=${MIRROR_KNOWN_HOSTS} -o StrictHostKeyChecking=yes" \
+            git push --set-upstream git@github.com:jvallery/frigate.git "${intake_branch}"
 
           while read -r number; do
             [[ -z "${number}" ]] && continue
@@ -187,4 +210,18 @@ jobs:
             gh issue comment "${number}" --repo "${GITHUB_REPOSITORY}" --body "${body}"
           else
             gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body "${body}"
+          fi
+
+      - name: Remove the ephemeral deploy identity
+        if: always()
+        env:
+          MIRROR_KEY_PATH: ${{ steps.mirror-key.outputs.key_path }}
+          MIRROR_KNOWN_HOSTS: ${{ steps.mirror-key.outputs.known_hosts }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${MIRROR_KEY_PATH}" && -f "${MIRROR_KEY_PATH}" ]]; then
+            shred --remove "${MIRROR_KEY_PATH}"
+          fi
+          if [[ -n "${MIRROR_KNOWN_HOSTS}" && -f "${MIRROR_KNOWN_HOSTS}" ]]; then
+            shred --remove "${MIRROR_KNOWN_HOSTS}"
           fi
