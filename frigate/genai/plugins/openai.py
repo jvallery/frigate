@@ -11,6 +11,10 @@ from openai import OpenAI
 
 from frigate.config import GenAIProviderEnum
 from frigate.genai import GenAIClient, register_genai_provider
+from frigate.genai.image_limit import (
+    enforce_chat_image_limit,
+    limit_description_images,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,7 @@ class OpenAIClient(GenAIClient):
         enable_thinking: bool = False,
     ) -> str | None:
         """Submit a request to OpenAI."""
+        images = limit_description_images(images)
         encoded_images = [base64.b64encode(image).decode("utf-8") for image in images]
         messages_content: list[dict] = [
             {
@@ -210,7 +215,7 @@ class OpenAIClient(GenAIClient):
 
             request_params = {
                 "model": self.genai_config.model,
-                "messages": messages,
+                "messages": enforce_chat_image_limit(messages),
                 "timeout": self.timeout,
                 **self.genai_config.runtime_options,
             }
@@ -332,7 +337,7 @@ class OpenAIClient(GenAIClient):
 
             request_params = {
                 "model": self.genai_config.model,
-                "messages": messages,
+                "messages": enforce_chat_image_limit(messages),
                 "timeout": self.timeout,
                 "stream": True,
                 "stream_options": {"include_usage": True},
