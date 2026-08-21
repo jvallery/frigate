@@ -3,7 +3,6 @@ import logging
 import multiprocessing as mp
 import os
 import secrets
-import shutil
 from collections.abc import Callable
 from multiprocessing import Queue
 from multiprocessing.managers import DictProxy, SyncManager
@@ -44,6 +43,7 @@ from frigate.const import (
     TRIGGER_DIR,
 )
 from frigate.data_processing.types import DataProcessorMetrics
+from frigate.db.sqlite_backup import create_consistent_database_backup
 from frigate.db.sqlitevecq import SqliteVecQueueDatabase
 from frigate.debug_replay import (
     DebugReplayManager,
@@ -196,8 +196,8 @@ class FrigateApp:
         router = Router(migrate_db)
 
         if len(router.diff) > 0:
-            logger.info("Making backup of DB before migrations...")
-            shutil.copyfile(
+            logger.info("Making consistent backup of DB before migrations...")
+            create_consistent_database_backup(
                 self.config.database.path,
                 self.config.database.path.replace("frigate.db", "backup.db"),
             )
