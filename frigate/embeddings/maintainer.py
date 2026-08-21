@@ -42,6 +42,10 @@ from frigate.data_processing.post.api import PostProcessorApi
 from frigate.data_processing.post.audio_transcription import (
     AudioTranscriptionPostProcessor,
 )
+from frigate.data_processing.post.description_recovery import (
+    DescriptionRecoveryCoordinator,
+)
+from frigate.data_processing.post.description_work_queue import DescriptionWorkQueue
 from frigate.data_processing.post.license_plate import (
     LicensePlatePostProcessor,
 )
@@ -140,6 +144,9 @@ class EmbeddingMaintainer(threading.Thread):
         db.bind(models)
 
         self.genai_manager = GenAIClientManager(config)
+        self.description_queue = DescriptionWorkQueue(
+            metrics=metrics.genai_description_queue
+        )
 
         if config.semantic_search.enabled:
             self.embeddings = Embeddings(config, db, metrics, self.genai_manager)
@@ -229,6 +236,8 @@ class EmbeddingMaintainer(threading.Thread):
 
         # post processors
         self.post_processors: list[PostProcessorApi] = []
+        self.review_description_processor: ReviewDescriptionProcessor | None = None
+        self.object_description_processor: ObjectDescriptionProcessor | None = None
 
         if self.config.lpr.enabled:
             self.post_processors.append(
@@ -266,6 +275,20 @@ class EmbeddingMaintainer(threading.Thread):
 
         self._sync_genai_processors()
 
+        self.description_recovery = DescriptionRecoveryCoordinator(
+            self.config,
+            self.object_description_processor,
+            self.review_description_processor,
+        )
+        if self.object_description_processor is not None:
+            self.object_description_processor.description_recovery = (
+                self.description_recovery
+            )
+        if self.review_description_processor is not None:
+            self.review_description_processor.description_recovery = (
+                self.description_recovery
+            )
+
         self.stop_event = stop_event
 
         # recordings data
@@ -289,14 +312,21 @@ class EmbeddingMaintainer(threading.Thread):
             isinstance(p, ReviewDescriptionProcessor) for p in self.post_processors
         ):
             logger.debug("Initializing review description processor")
-            self.post_processors.append(
-                ReviewDescriptionProcessor(
-                    self.config,
-                    self.requestor,
-                    self.metrics,
-                    self.genai_manager,
-                )
+            self.review_description_processor = ReviewDescriptionProcessor(
+                self.config,
+                self.requestor,
+                self.metrics,
+                self.genai_manager,
+                self.description_queue,
             )
+            self.post_processors.append(self.review_description_processor)
+            if hasattr(self, "description_recovery"):
+                self.review_description_processor.description_recovery = (
+                    self.description_recovery
+                )
+                self.description_recovery.review_processor = (
+                    self.review_description_processor
+                )
 
         if any(
             c.objects.genai.enabled or c.objects.genai.enabled_in_config
@@ -305,16 +335,23 @@ class EmbeddingMaintainer(threading.Thread):
             isinstance(p, ObjectDescriptionProcessor) for p in self.post_processors
         ):
             logger.debug("Initializing object description processor")
-            self.post_processors.append(
-                ObjectDescriptionProcessor(
-                    self.config,
-                    self.embeddings,
-                    self.requestor,
-                    self.metrics,
-                    self.genai_manager,
-                    self.semantic_trigger_processor,
-                )
+            self.object_description_processor = ObjectDescriptionProcessor(
+                self.config,
+                self.embeddings,
+                self.requestor,
+                self.metrics,
+                self.genai_manager,
+                self.semantic_trigger_processor,
+                self.description_queue,
             )
+            self.post_processors.append(self.object_description_processor)
+            if hasattr(self, "description_recovery"):
+                self.object_description_processor.description_recovery = (
+                    self.description_recovery
+                )
+                self.description_recovery.object_processor = (
+                    self.object_description_processor
+                )
 
     def _check_camera_config_updates(self) -> None:
         """Apply camera config updates and register newly enabled processors."""
@@ -337,11 +374,14 @@ class EmbeddingMaintainer(threading.Thread):
             self._expire_dedicated_lpr()
             self._process_finalized()
             self._process_event_metadata()
+            self.description_recovery.tick()
 
         # Shutdown deferred processors
         for processor in self.realtime_processors:
             processor.shutdown()
 
+        self.description_recovery.stop()
+        self.description_queue.stop()
         self.config_updater.stop()
         self.enrichment_config_subscriber.stop()
         self.event_subscriber.stop()

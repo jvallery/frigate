@@ -6,7 +6,6 @@ import logging
 import math
 import os
 import shutil
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +24,23 @@ from frigate.const import (
     CLIPS_DIR,
     UPDATE_REVIEW_DESCRIPTION,
 )
+from frigate.data_processing.post.description_recovery import (
+    ConditionalWriteResult,
+    DescriptionRecoveryCoordinator,
+    RecoveryAdmission,
+    dispatcher_write_succeeded,
+    persist_review_metadata,
+)
+from frigate.data_processing.post.description_work_queue import (
+    DescriptionWorkQueue,
+)
 from frigate.data_processing.types import PostProcessDataEnum
-from frigate.genai import GenAIClient
 from frigate.genai.manager import GenAIClientManager
+from frigate.genai.request_outcome import (
+    AttemptOutcome,
+    consume_outcome,
+    reset_outcome,
+)
 from frigate.models import Recordings, ReviewSegment
 from frigate.util.builtin import EventsPerSecond, InferenceSpeed
 from frigate.util.image import get_image_from_recording
@@ -50,11 +63,14 @@ class ReviewDescriptionProcessor(PostProcessorApi):
         requestor: InterProcessRequestor,
         metrics: DataProcessorMetrics,
         genai_manager: GenAIClientManager,
+        description_queue: DescriptionWorkQueue,
     ):
         super().__init__(config, metrics, None)
         self.requestor = requestor
         self.metrics = metrics
         self.genai_manager = genai_manager
+        self.description_queue = description_queue
+        self.description_recovery: DescriptionRecoveryCoordinator | None = None
         self.review_desc_speed = InferenceSpeed(self.metrics.review_desc_speed)
         self.review_desc_dps = EventsPerSecond()
         self.review_desc_dps.start()
@@ -131,9 +147,6 @@ class ReviewDescriptionProcessor(PostProcessorApi):
         self.metrics.review_desc_dps.value = self.review_desc_dps.eps()
 
         if data_type != PostProcessDataEnum.review:
-            return
-
-        if self.genai_manager.description_client is None:
             return
 
         camera = data["after"]["camera"]
@@ -219,22 +232,138 @@ class ReviewDescriptionProcessor(PostProcessorApi):
                     camera_config.review.genai.debug_save_thumbnails,
                 )
 
-            # kickoff analysis
-            self.review_desc_dps.update()
-            threading.Thread(
-                target=run_analysis,
-                args=(
-                    self.requestor,
-                    self.genai_manager.description_client,
-                    self.review_desc_speed,
+            # Queue one immutable review job behind object work.
+            if self._submit_analysis(
+                camera_config,
+                final_data,
+                thumbs,
+                camera_config.review.genai,
+            ):
+                self.review_desc_dps.update()
+
+    def _record_live_failure(
+        self,
+        review_id: Any,
+        outcome: AttemptOutcome,
+    ) -> None:
+        if outcome != AttemptOutcome.success and self.description_recovery is not None:
+            self.description_recovery.note_live_failure("review", review_id)
+
+    def _submit_analysis(
+        self,
+        camera_config: CameraConfig,
+        final_data: dict[str, Any],
+        thumbs: list[bytes],
+        genai_config: GenAIReviewConfig,
+        recovery: bool = False,
+        on_complete: Any | None = None,
+    ) -> bool:
+        frozen_data = copy.deepcopy(final_data)
+        frozen_thumbs = tuple(bytes(image) for image in thumbs if image)
+        state: dict[str, Any] = {}
+        completion_callback = on_complete
+        if completion_callback is None and not recovery:
+
+            def record_failure(outcome: AttemptOutcome) -> None:
+                self._record_live_failure(frozen_data["id"], outcome)
+
+            completion_callback = record_failure
+        submitter = (
+            self.description_queue.submit_recovery
+            if recovery
+            else self.description_queue.submit
+        )
+        accepted = submitter(
+            "review",
+            lambda worker_requestor: run_analysis(
+                worker_requestor,
+                self.genai_manager,
+                self.review_desc_speed,
+                camera_config,
+                frozen_data,
+                frozen_thumbs,
+                genai_config,
+                list(self.config.model.merged_labelmap.values()),
+                self.config.model.all_attributes,
+                recovery,
+                state,
+            ),
+            on_complete=completion_callback,
+        )
+        if not accepted and not recovery and self.description_recovery is not None:
+            self.description_recovery.note_live_failure("review", frozen_data["id"])
+        return accepted
+
+    def submit_recovery(
+        self,
+        review: ReviewSegment,
+        on_complete: Any,
+    ) -> RecoveryAdmission:
+        """Submit one missing review metadata item without publishing updates."""
+        try:
+            review = ReviewSegment.get_by_id(review.id)
+            camera_config = self.config.cameras.get(str(review.camera))
+            raw_data: Any = review.data
+            data: dict[str, Any] = raw_data if isinstance(raw_data, dict) else {}
+            if (
+                camera_config is None
+                or not camera_config.review.genai.enabled
+                or data.get("metadata")
+                or (
+                    review.severity == "alert" and not camera_config.review.genai.alerts
+                )
+                or (
+                    review.severity == "detection"
+                    and not camera_config.review.genai.detections
+                )
+                or review.severity not in ("alert", "detection")
+            ):
+                return RecoveryAdmission.terminal_skip
+
+            final_data = dict(review.__data__)
+            final_data["data"] = copy.deepcopy(data)
+            raw_start_time: Any = review.start_time
+            raw_end_time: Any = review.end_time
+            start_time = (
+                raw_start_time.timestamp()
+                if hasattr(raw_start_time, "timestamp")
+                else float(raw_start_time)
+            )
+            end_time = (
+                raw_end_time.timestamp()
+                if hasattr(raw_end_time, "timestamp")
+                else float(raw_end_time)
+            )
+            final_data["start_time"] = start_time
+            final_data["end_time"] = end_time
+            thumbs = self.get_preview_frames_as_bytes(
+                str(review.camera),
+                start_time,
+                end_time,
+                str(review.thumb_path),
+                str(review.id),
+                False,
+            )
+            if not thumbs:
+                return RecoveryAdmission.retry_later
+            return (
+                RecoveryAdmission.accepted
+                if self._submit_analysis(
                     camera_config,
                     final_data,
                     thumbs,
                     camera_config.review.genai,
-                    list(self.config.model.merged_labelmap.values()),
-                    self.config.model.all_attributes,
-                ),
-            ).start()
+                    recovery=True,
+                    on_complete=on_complete,
+                )
+                else RecoveryAdmission.retry_later
+            )
+        except Exception as error:
+            logger.warning(
+                "Review description recovery candidate skipped (%s)",
+                type(error).__name__,
+            )
+            return RecoveryAdmission.retry_later
 
     def handle_request(self, topic: str, request_data: dict[str, Any]) -> str | None:
         if topic == EmbeddingsRequestEnum.summarize_review.value:
@@ -536,16 +665,20 @@ class ReviewDescriptionProcessor(PostProcessorApi):
 
 def run_analysis(
     requestor: InterProcessRequestor,
-    genai_client: GenAIClient,
+    genai_manager: GenAIClientManager,
     review_inference_speed: InferenceSpeed,
     camera_config: CameraConfig,
     final_data: dict[str, Any],
-    thumbs: list[bytes],
+    thumbs: tuple[bytes, ...],
     genai_config: GenAIReviewConfig,
     labelmap_objects: list[str],
     attribute_labels: list[str],
-) -> None:
+    recovery: bool,
+    state: dict[str, Any],
+) -> AttemptOutcome:
     start = datetime.datetime.now().timestamp()
+    if not thumbs:
+        return AttemptOutcome.invalid_input
 
     # Format zone names using zone config friendly names if available
     formatted_zones = []
@@ -589,26 +722,68 @@ def run_analysis(
 
     analytics_data["unified_objects"] = unified_objects
 
-    metadata = genai_client.generate_review_description(
-        analytics_data,
-        thumbs,
-        genai_config.additional_concerns,
-        genai_config.preferred_language,
-        genai_config.debug_save_thumbnails,
-        genai_config.activity_context_prompt,
-    )
+    if recovery:
+        try:
+            fresh = ReviewSegment.get_by_id(final_data["id"])
+            fresh_data = fresh.data if isinstance(fresh.data, dict) else {}
+            if fresh_data.get("metadata"):
+                return AttemptOutcome.success
+        except Exception:
+            return AttemptOutcome.invalid_input
+
+    metadata_dict = state.get("metadata")
+    if metadata_dict is None:
+        client = genai_manager.description_client
+        if client is None:
+            return AttemptOutcome.provider_unavailable
+        reset_outcome()
+        try:
+            metadata = client.generate_review_description(
+                analytics_data,
+                list(thumbs),
+                genai_config.additional_concerns,
+                genai_config.preferred_language,
+                False if recovery else genai_config.debug_save_thumbnails,
+                genai_config.activity_context_prompt,
+            )
+        except Exception:
+            return AttemptOutcome.internal_error
+        provider_outcome = consume_outcome()
+        if not metadata:
+            return (
+                AttemptOutcome.invalid_response
+                if provider_outcome == AttemptOutcome.success
+                else provider_outcome
+            )
+        metadata_dict = metadata.model_dump()
+        if not isinstance(metadata_dict, dict) or not metadata_dict:
+            return AttemptOutcome.invalid_response
+        state["metadata"] = metadata_dict
+
+    try:
+        if recovery:
+            write_result = persist_review_metadata(final_data["id"], metadata_dict)
+            if write_result == ConditionalWriteResult.failed:
+                return AttemptOutcome.persistence_error
+        else:
+            persisted_data = copy.deepcopy(final_data)
+            prev_data = copy.deepcopy(final_data)
+            persisted_data["data"]["metadata"] = metadata_dict
+            response = requestor.send_data(
+                UPDATE_REVIEW_DESCRIPTION,
+                {
+                    "type": "genai",
+                    "before": prev_data,
+                    "after": persisted_data,
+                },
+            )
+            if not dispatcher_write_succeeded(
+                response,
+                allow_already_present=True,
+            ):
+                return AttemptOutcome.persistence_error
+    except Exception:
+        return AttemptOutcome.persistence_error
+
     review_inference_speed.update(datetime.datetime.now().timestamp() - start)
-
-    if not metadata:
-        return None
-
-    prev_data = copy.deepcopy(final_data)
-    final_data["data"]["metadata"] = metadata.model_dump()
-    requestor.send_data(
-        UPDATE_REVIEW_DESCRIPTION,
-        {
-            "type": "genai",
-            "before": {k: v for k, v in prev_data.items()},
-            "after": {k: v for k, v in final_data.items()},
-        },
-    )
+    return AttemptOutcome.success
