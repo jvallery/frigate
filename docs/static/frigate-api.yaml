@@ -2449,7 +2449,7 @@ paths:
       description: |-
         **Access:** Any authenticated user.
 
-        Expose Prometheus metrics endpoint and update metrics with latest stats
+        Expose one serialized Prometheus snapshot without queuing scrapes.
       operationId: metrics_metrics_get
       responses:
         '200':
