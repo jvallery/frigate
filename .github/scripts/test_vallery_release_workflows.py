@@ -65,6 +65,8 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         body = BUILD_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("--driver remote", body)
         self.assertIn("BUILDKIT_HOST: tcp://127.0.0.1:1234", body)
+        self.assertIn("docker --version", body)
+        self.assertNotIn("docker version --format", body)
         self.assertIn("--file docker/tensorrt/trt.hcl", body)
         self.assertIn("--file .vallery/release-build.hcl", body)
         self.assertIn("--provenance mode=max", body)
