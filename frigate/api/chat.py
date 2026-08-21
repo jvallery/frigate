@@ -38,6 +38,7 @@ from frigate.api.defs.tags import Tags
 from frigate.api.event import _build_attribute_filter_clause, events
 from frigate.config import FrigateConfig
 from frigate.config.classification import SemanticSearchModelEnum
+from frigate.genai.image_limit import enforce_chat_image_limit
 from frigate.genai.prompts import (
     build_chat_system_prompt,
     get_attribute_classifications,
@@ -1223,6 +1224,7 @@ async def chat_completion(
                     f"Streaming LLM (iteration {stream_iterations + 1}/{max_iterations}) "
                     f"with {len(conversation)} message(s)"
                 )
+                conversation = enforce_chat_image_limit(conversation)
                 async for event in genai_client.chat_with_tools_stream(
                     messages=conversation,
                     tools=tools if tools else None,
@@ -1320,6 +1322,7 @@ async def chat_completion(
                 f"Calling LLM (iteration {tool_iterations + 1}/{max_iterations}) "
                 f"with {len(conversation)} message(s) in conversation"
             )
+            conversation = enforce_chat_image_limit(conversation)
             response = genai_client.chat_with_tools(
                 messages=conversation,
                 tools=tools if tools else None,
