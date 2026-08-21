@@ -2,7 +2,10 @@ name: PR template check
 
 on:
   pull_request_target:
-    types: [opened, edited]
+    # Re-emit the required status whenever the candidate source SHA changes.
+    # This workflow reads PR metadata only and never checks out or executes the
+    # contributor-controlled head.
+    types: [opened, edited, synchronize]
 
 permissions:
   contents: read
