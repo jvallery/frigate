@@ -3,7 +3,6 @@ import logging
 import multiprocessing as mp
 import os
 import secrets
-import shutil
 from collections.abc import Callable
 from multiprocessing import Queue
 from multiprocessing.managers import DictProxy, SyncManager
@@ -82,6 +81,7 @@ from frigate.storage import StorageMaintainer
 from frigate.timeline import TimelineProcessor
 from frigate.track.object_processing import TrackedObjectProcessor
 from frigate.util.builtin import empty_and_close_queue
+from frigate.util.database import create_database_backup
 from frigate.util.image import UntrackedSharedMemory
 from frigate.util.process import FrigateProcess
 from frigate.util.services import set_file_limit
@@ -197,7 +197,7 @@ class FrigateApp:
 
         if len(router.diff) > 0:
             logger.info("Making backup of DB before migrations...")
-            shutil.copyfile(
+            create_database_backup(
                 self.config.database.path,
                 self.config.database.path.replace("frigate.db", "backup.db"),
             )
