@@ -156,7 +156,10 @@ class ONNXModelRunner(BaseModelRunner):
         # Import here to avoid circular imports
         from frigate.embeddings.types import EnrichmentModelTypeEnum
 
-        return model_type == EnrichmentModelTypeEnum.jina_v2.value
+        return model_type in [
+            EnrichmentModelTypeEnum.jina_v2.value,
+            EnrichmentModelTypeEnum.arcface.value,
+        ]
 
     def __init__(self, ort: ort.InferenceSession, model_type: str | None = None):
         self.ort = ort
@@ -205,6 +208,7 @@ class CudaGraphRunner(BaseModelRunner):
             EnrichmentModelTypeEnum.paddleocr.value,
             EnrichmentModelTypeEnum.jina_v1.value,
             EnrichmentModelTypeEnum.jina_v2.value,
+            EnrichmentModelTypeEnum.arcface.value,
             EnrichmentModelTypeEnum.yolov9_license_plate.value,
         ]
 
@@ -581,14 +585,24 @@ def get_optimized_runner(
 ) -> BaseModelRunner:
     """Get an optimized runner for the hardware."""
     device = device or "AUTO"
+    from frigate.embeddings.types import EnrichmentModelTypeEnum
 
-    if device != "CPU" and is_rknn_compatible(model_path):
+    is_arcface = model_type == EnrichmentModelTypeEnum.arcface.value
+
+    if not is_arcface and device != "CPU" and is_rknn_compatible(model_path):
         rknn_path = auto_convert_model(model_path)
 
         if rknn_path:
             return RKNNModelRunner(rknn_path)
 
     providers, options = get_ort_providers(device == "CPU", device, **kwargs)
+
+    if is_arcface:
+        from frigate.embeddings.onnx.arcface_gpu_retry import (
+            require_arcface_cuda_provider,
+        )
+
+        providers, options = require_arcface_cuda_provider(providers, options)
 
     if providers[0] == "CPUExecutionProvider":
         # In the default image, ONNXRuntime is used so we will only get CPUExecutionProvider
@@ -623,12 +637,17 @@ def get_optimized_runner(
         providers.pop(0)
         options.pop(0)
 
+    session_options = get_ort_session_options(
+        ONNXModelRunner.is_cpu_complex_model(model_type)
+    )
+    if is_arcface:
+        session_options = session_options or ort.SessionOptions()
+        session_options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+
     return ONNXModelRunner(
         ort.InferenceSession(
             model_path,
-            sess_options=get_ort_session_options(
-                ONNXModelRunner.is_cpu_complex_model(model_type)
-            ),
+            sess_options=session_options,
             providers=providers,
             provider_options=options,
         ),
