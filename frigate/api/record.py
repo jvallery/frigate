@@ -1,6 +1,5 @@
 """Recording APIs."""
 
-import datetime as dt
 import logging
 from datetime import datetime, timedelta
 from functools import reduce
@@ -25,6 +24,7 @@ from frigate.api.defs.query.recordings_query_parameters import (
 )
 from frigate.api.defs.response.generic_response import GenericResponse
 from frigate.api.defs.tags import Tags
+from frigate.api.recording_days import query_recording_days
 from frigate.const import RECORD_DIR
 from frigate.models import Event, Recordings
 from frigate.util.time import get_dst_transitions
@@ -76,45 +76,13 @@ def all_recordings_summary(
     else:
         camera_list = allowed_cameras
 
-    time_range_query = (
-        Recordings.select(
-            fn.MIN(Recordings.start_time).alias("min_time"),
-            fn.MAX(Recordings.start_time).alias("max_time"),
-        )
-        .where(Recordings.camera << camera_list)
-        .dicts()
-        .get()
+    days = query_recording_days(
+        Recordings,
+        camera_list,
+        params.timezone,
+        get_dst_transitions,
     )
-
-    min_time = time_range_query.get("min_time")
-    max_time = time_range_query.get("max_time")
-
-    if min_time is None or max_time is None:
-        return JSONResponse(content={})
-
-    dst_periods = get_dst_transitions(params.timezone, min_time, max_time)
-
-    days: dict[str, bool] = {}
-
-    for period_start, period_end, period_offset in dst_periods:
-        day_expr = ((Recordings.start_time + period_offset) / 86400).cast("int")
-
-        period_query = (
-            Recordings.select(day_expr.alias("day_idx"))
-            .where(
-                (Recordings.camera << camera_list)
-                & (Recordings.end_time >= period_start)
-                & (Recordings.start_time <= period_end)
-            )
-            .distinct()
-            .namedtuples()
-        )
-
-        for g in period_query:
-            day_str = (dt.date(1970, 1, 1) + dt.timedelta(days=g.day_idx)).isoformat()
-            days[day_str] = True
-
-    return JSONResponse(content=dict(sorted(days.items())))
+    return JSONResponse(content=days)
 
 
 @router.get(
