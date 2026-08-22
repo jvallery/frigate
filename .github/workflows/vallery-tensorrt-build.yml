@@ -153,26 +153,7 @@ jobs:
             test "${attempt}" -lt 60
             sleep 2
           done
-          registry_config="${RUNNER_TEMP}/buildx-registry.toml"
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          registry = os.environ["ZOT_PUSH_REGISTRY"]
-          if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", registry):
-              raise SystemExit("Zot push registry must be a host with an optional port")
-          Path(os.environ["RUNNER_TEMP"], "buildx-registry.toml").write_text(
-              f'[registry."{registry}"]\n  http = true\n', encoding="utf-8"
-          )
-          PY
-          chmod 0600 "${registry_config}"
-          docker buildx create \
-            --name vallery-job \
-            --driver remote \
-            --buildkitd-config "${registry_config}" \
-            "${BUILDKIT_HOST}" \
-            --use
+          docker buildx create --name vallery-job --driver remote "${BUILDKIT_HOST}" --use
           docker buildx inspect --bootstrap
           docker --version
           docker buildx version
@@ -264,19 +245,65 @@ jobs:
         run: |
           set -euo pipefail
           inspect_digest() {
-            docker buildx imagetools inspect \
-              --builder vallery-job \
-              "$1" \
-              --format '{{json .Manifest.Digest}}' | jq -er .
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest.Digest}}' | jq -er .
+          }
+          inspect_zot_push_digest() {
+            python3 - "$1" <<'PY'
+          import http.client
+          import json
+          import os
+          import re
+          import sys
+          import urllib.parse
+          from pathlib import Path
+
+          registry = os.environ["ZOT_PUSH_REGISTRY"]
+          reference = sys.argv[1]
+          if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", registry):
+              raise SystemExit("Zot push registry must be a host with an optional port")
+          if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}", reference):
+              raise SystemExit("invalid OCI tag")
+          config = json.loads(
+              (Path(os.environ["DOCKER_CONFIG"]) / "config.json").read_text(encoding="utf-8")
+          )
+          entry = config.get("auths", {}).get(registry, {})
+          encoded_auth = entry.get("auth")
+          if not isinstance(encoded_auth, str) or not encoded_auth:
+              raise SystemExit("Zot writer authentication is unavailable")
+          headers = {
+              "Accept": ", ".join(
+                  [
+                      "application/vnd.oci.image.index.v1+json",
+                      "application/vnd.oci.image.manifest.v1+json",
+                      "application/vnd.docker.distribution.manifest.list.v2+json",
+                      "application/vnd.docker.distribution.manifest.v2+json",
+                  ]
+              ),
+              "Authorization": f"Basic {encoded_auth}",
+          }
+          connection = http.client.HTTPConnection(registry, timeout=30)
+          try:
+              path = f"/v2/jvallery/frigate/manifests/{urllib.parse.quote(reference, safe='')}"
+              connection.request("HEAD", path, headers=headers)
+              response = connection.getresponse()
+              if response.status != 200:
+                  raise SystemExit(f"Zot push manifest inspection returned HTTP {response.status}")
+              digest = response.getheader("Docker-Content-Digest", "")
+          finally:
+              connection.close()
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+              raise SystemExit("Zot push manifest returned an invalid digest")
+          print(digest)
+          PY
           }
           standard_expected="$(jq -er '.["vallery-standard"]["containerimage.digest"]' "${RUNNER_TEMP}/build-metadata.json")"
           tensorrt_expected="$(jq -er '.tensorrt["containerimage.digest"]' "${RUNNER_TEMP}/build-metadata.json")"
           [[ "${standard_expected}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${tensorrt_expected}" =~ ^sha256:[0-9a-f]{64}$ ]]
           test "$(inspect_digest "${GHCR_REPOSITORY}:${RELEASE_ID}-standard")" = "${standard_expected}"
-          test "$(inspect_digest "${ZOT_PUSH_REGISTRY}/jvallery/frigate:${RELEASE_ID}-standard")" = "${standard_expected}"
+          test "$(inspect_zot_push_digest "${RELEASE_ID}-standard")" = "${standard_expected}"
           test "$(inspect_digest "${GHCR_REPOSITORY}:${RELEASE_ID}-tensorrt")" = "${tensorrt_expected}"
-          test "$(inspect_digest "${ZOT_PUSH_REGISTRY}/jvallery/frigate:${RELEASE_ID}-tensorrt")" = "${tensorrt_expected}"
+          test "$(inspect_zot_push_digest "${RELEASE_ID}-tensorrt")" = "${tensorrt_expected}"
           for attempt in $(seq 1 12); do
             public_standard="$(inspect_digest "${ZOT_PUBLIC_REPOSITORY}:${RELEASE_ID}-standard" 2>/dev/null || true)"
             public_tensorrt="$(inspect_digest "${ZOT_PUBLIC_REPOSITORY}:${RELEASE_ID}-tensorrt" 2>/dev/null || true)"
