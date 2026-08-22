@@ -18,6 +18,7 @@ RETIREMENT_WORKFLOW = ROOT / ".github/workflows/upstream-patch-retirement.yml"
 INTEGRATION_WORKFLOW = ROOT / ".github/workflows/vallery-integration.yml"
 BAKE = ROOT / ".vallery/release-build.hcl"
 SCHEMA = ROOT / ".vallery/release-manifest.schema.json"
+MAIN_DOCKERFILE = ROOT / "docker/main/Dockerfile"
 
 
 def load_module(name: str, path: Path):
@@ -159,6 +160,14 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         self.assertIn('dockerfile = "docker/main/Dockerfile"', body)
         self.assertIn('target     = "frigate"', body)
         self.assertIn('platforms  = ["linux/amd64"]', body)
+
+    def test_model_archive_extracts_without_restoring_foreign_ownership(self) -> None:
+        body = MAIN_DOCKERFILE.read_text(encoding="utf-8")
+        self.assertIn(
+            "tar --no-same-owner -xvf "
+            "ssdlite_mobilenet_v2_coco_2018_05_09.tar.gz",
+            body,
+        )
 
     def test_manifest_is_public_and_digest_closed(self) -> None:
         digest_a = "sha256:" + "a" * 64
