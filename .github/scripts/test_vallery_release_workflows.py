@@ -88,6 +88,9 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         self.assertIn("jvallery/frigate/arc/cache/standard", body)
         self.assertIn("jvallery/frigate/arc/cache/tensorrt", body)
         self.assertNotIn("registry-origin", body)
+        self.assertIn('default_config = Path.home() / ".docker" / "config.json"', body)
+        self.assertIn("default_config.symlink_to(target)", body)
+        self.assertIn('test "$(readlink "${default_config}")" = "${DOCKER_CONFIG}/config.json"', body)
 
     def test_untrusted_workflow_cannot_receive_private_authorities(self) -> None:
         integration = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
