@@ -67,6 +67,9 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
     def test_build_uses_one_rootless_remote_bake_for_both_registries(self) -> None:
         body = BUILD_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("--driver remote", body)
+        self.assertIn('--buildkitd-config "${registry_config}"', body)
+        self.assertIn('f\'[registry."{registry}"]\\n  http = true\\n\'', body)
+        self.assertIn("--builder vallery-job", body)
         self.assertIn("BUILDKIT_HOST: tcp://127.0.0.1:1234", body)
         self.assertIn("docker --version", body)
         self.assertNotIn("docker version --format", body)
