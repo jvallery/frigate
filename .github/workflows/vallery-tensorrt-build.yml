@@ -37,7 +37,8 @@ jobs:
   build:
     name: Build standard amd64 and TensorRT
     runs-on: build-trusted
-    timeout-minutes: 480
+    # GitHub accepts at most 360 minutes for a workflow job timeout.
+    timeout-minutes: 360
     outputs:
       standard_digest: ${{ steps.verify.outputs.standard_digest }}
       tensorrt_digest: ${{ steps.verify.outputs.tensorrt_digest }}
