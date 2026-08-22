@@ -141,6 +141,12 @@ jobs:
           auths["ghcr.io"] = {"auth": encoded}
           target.write_text(json.dumps(config), encoding="utf-8")
           target.chmod(0o600)
+          default_config = Path.home() / ".docker" / "config.json"
+          if default_config.exists() or default_config.is_symlink():
+              raise SystemExit("default Docker credential path is already occupied")
+          default_config.parent.mkdir(mode=0o700, exist_ok=True)
+          default_config.parent.chmod(0o700)
+          default_config.symlink_to(target)
           PY
 
       - name: Bind Buildx to the per-job rootless BuildKit sidecar
@@ -391,5 +397,11 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "${DOCKER_CONFIG:-}" && "${DOCKER_CONFIG}" == "${RUNNER_TEMP}/"* ]]; then
+            default_config="${HOME}/.docker/config.json"
+            if [[ -L "${default_config}" ]]; then
+              test "$(readlink "${default_config}")" = "${DOCKER_CONFIG}/config.json"
+              rm -f "${default_config}"
+              rmdir "${HOME}/.docker" 2>/dev/null || true
+            fi
             rm -f "${DOCKER_CONFIG}/config.json"
           fi
