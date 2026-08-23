@@ -153,6 +153,14 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         self.assertIn('evidence / "build.log"', body)
         self.assertIn('"private_registry_redacted"', body)
 
+    def test_build_generates_runtime_version_from_exact_source(self) -> None:
+        body = BUILD_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("Generate and prove runtime version assets", body)
+        self.assertIn("make version", body)
+        self.assertIn('short_sha="$(git log -1 --pretty=format:%h "${SOURCE_SHA}")"', body)
+        self.assertIn('test "$(cat frigate/version.py)"', body)
+        self.assertIn("module.VERSION != expected", body)
+
     def test_retirement_is_internal_exact_match_and_not_automatic_removal(self) -> None:
         body = RETIREMENT_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("plan_upstream_patch_retirement.py", body)
