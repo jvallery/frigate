@@ -1,0 +1,13 @@
+{
+  "deployment_state": "adopted-as-public-desired-state",
+  "environment": "frigate-dev",
+  "history_class": "value-blind-migration",
+  "image": "registry.vallery.net/jvallery/frigate@sha256:7b16158c7da16207d23cedd2f5b3758390a9908495efe9ffa970c5e5e0a3a9a0",
+  "previous_image": "registry.vallery.net/jvallery/frigate@sha256:a1a3f99d71bc16ec43693bc8daba94b3e3bfccb146b5771a09ff9704c6cbe9d4",
+  "previous_release_id": "v0.18.0-vallery.20260823.4",
+  "release_workflow": "https://github.com/jvallery/frigate/actions/runs/32656991354",
+  "release_id": "v0.18.0-vallery.20260823.5",
+  "schema": "vallery.frigate.dev-release-adoption/1",
+  "source_sha": "9dece1f651c76b2a69fdb55748b794534b638d9c",
+  "upstream_sha": "ad79e666eb666d0c858cb95071f6af75f3f29866"
+}

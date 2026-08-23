@@ -1,0 +1,40 @@
+diff --git a/deploy/kubernetes/local-dev/deployment.yaml b/deploy/kubernetes/local-dev/deployment.yaml
+--- a/deploy/kubernetes/local-dev/deployment.yaml
++++ b/deploy/kubernetes/local-dev/deployment.yaml
+@@ -6,13 +6,13 @@
+     app.kubernetes.io/name: frigate-dev
+     app.kubernetes.io/part-of: frigate
+     app.kubernetes.io/environment: development
+-    app.kubernetes.io/version: v0.18.0-vallery.20260823.5
+-    vallery.net/source-sha: 9dece1f651c76b2a69fdb55748b794534b638d9c
++    app.kubernetes.io/version: v0.18.0-vallery.20260823.4
++    vallery.net/source-sha: fcb89ae464c939fbe47f9a35e5e8f91c765509e0
+     vallery.net/image-variant: standard-amd64
+     vallery.net/detector-device: cpu
+     vallery.net/semantic-device: cpu
+   annotations:
+-    vallery.net/release-id: v0.18.0-vallery.20260823.5
++    vallery.net/release-id: v0.18.0-vallery.20260823.4
+     vallery.net/image-variant: standard-amd64
+ spec:
+   replicas: 1
+@@ -28,8 +28,8 @@
+         app.kubernetes.io/name: frigate-dev
+         app.kubernetes.io/part-of: frigate
+         app.kubernetes.io/environment: development
+-        app.kubernetes.io/version: v0.18.0-vallery.20260823.5
+-        vallery.net/source-sha: 9dece1f651c76b2a69fdb55748b794534b638d9c
++        app.kubernetes.io/version: v0.18.0-vallery.20260823.4
++        vallery.net/source-sha: fcb89ae464c939fbe47f9a35e5e8f91c765509e0
+         vallery.net/image-variant: standard-amd64
+         vallery.net/detector-device: cpu
+         vallery.net/semantic-device: cpu
+@@ -77,7 +77,7 @@
+               readOnly: true
+       containers:
+         - name: frigate
+-          image: registry.vallery.net/jvallery/frigate@sha256:7b16158c7da16207d23cedd2f5b3758390a9908495efe9ffa970c5e5e0a3a9a0
++          image: registry.vallery.net/jvallery/frigate@sha256:a1a3f99d71bc16ec43693bc8daba94b3e3bfccb146b5771a09ff9704c6cbe9d4
+           imagePullPolicy: IfNotPresent
+           env:
+             - name: FRIGATE_CAMERA_HOST

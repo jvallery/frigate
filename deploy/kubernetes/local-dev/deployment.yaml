@@ -1,0 +1,164 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frigate-dev
+  labels:
+    app.kubernetes.io/name: frigate-dev
+    app.kubernetes.io/part-of: frigate
+    app.kubernetes.io/environment: development
+    app.kubernetes.io/version: v0.18.0-vallery.20260823.5
+    vallery.net/source-sha: 9dece1f651c76b2a69fdb55748b794534b638d9c
+    vallery.net/image-variant: standard-amd64
+    vallery.net/detector-device: cpu
+    vallery.net/semantic-device: cpu
+  annotations:
+    vallery.net/release-id: v0.18.0-vallery.20260823.5
+    vallery.net/image-variant: standard-amd64
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frigate-dev
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frigate-dev
+        app.kubernetes.io/part-of: frigate
+        app.kubernetes.io/environment: development
+        app.kubernetes.io/version: v0.18.0-vallery.20260823.5
+        vallery.net/source-sha: 9dece1f651c76b2a69fdb55748b794534b638d9c
+        vallery.net/image-variant: standard-amd64
+        vallery.net/detector-device: cpu
+        vallery.net/semantic-device: cpu
+    spec:
+      serviceAccountName: frigate-dev
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      nodeSelector:
+        agentfleet.vallery.net/frigate-dev-cpu: "true"
+      imagePullSecrets:
+        - name: frigate-dev-zot-pull
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: seed-config
+          image: docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args:
+            - cp -f /config-source/config.yml /config/config.yml
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+              ephemeral-storage: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+              ephemeral-storage: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: config-source
+              mountPath: /config-source
+              readOnly: true
+      containers:
+        - name: frigate
+          image: registry.vallery.net/jvallery/frigate@sha256:7b16158c7da16207d23cedd2f5b3758390a9908495efe9ffa970c5e5e0a3a9a0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FRIGATE_CAMERA_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: frigate-dev-secrets
+                  key: FRIGATE_CAMERA_HOST
+            - name: FRIGATE_CAMERA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: frigate-dev-secrets
+                  key: FRIGATE_CAMERA_USER
+            - name: FRIGATE_CAMERA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: frigate-dev-secrets
+                  key: FRIGATE_CAMERA_PASSWORD
+            - name: TZ
+              value: America/Denver
+          ports:
+            - name: internal
+              containerPort: 5000
+              protocol: TCP
+            - name: external
+              containerPort: 8971
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+              ephemeral-storage: 4Gi
+            limits:
+              cpu: "8"
+              memory: 12Gi
+              ephemeral-storage: 16Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+          startupProbe:
+            httpGet:
+              path: /api/version
+              port: internal
+            periodSeconds: 5
+            failureThreshold: 120
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/version
+              port: internal
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/version
+              port: internal
+            periodSeconds: 30
+            failureThreshold: 8
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+            - name: media
+              mountPath: /media/frigate
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: config
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: data
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: media
+          emptyDir:
+            sizeLimit: 8Gi
+        - name: config-source
+          configMap:
+            name: frigate-dev-config
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
