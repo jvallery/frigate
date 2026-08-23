@@ -258,6 +258,37 @@ class LocalDevPromotionTest(unittest.TestCase):
                     PROMOTION_RUN,
                 )
 
+    def test_prepare_rejects_nested_sensitive_release_field(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.initialize_repo(root)
+            manifest = release_manifest()
+            manifest["build"]["password"] = "redacted-test-value"
+            with self.assertRaisesRegex(SystemExit, "forbidden field"):
+                PROMOTION.prepare(
+                    root,
+                    self.write_manifest(root, manifest),
+                    PROMOTION_RUN,
+                )
+
+    def test_prepare_rejects_staged_deployment_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deployment = self.initialize_repo(root)
+            manifest_path = self.write_manifest(root)
+            deployment.write_text(
+                deployment.read_text(encoding="utf-8").replace(
+                    "replicas: 1", "replicas: 2"
+                ),
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", str(deployment)], cwd=root, check=True)
+
+            with self.assertRaisesRegex(SystemExit, "must be clean"):
+                PROMOTION.prepare(root, manifest_path, PROMOTION_RUN)
+
+            self.assertFalse((root / "deploy/kubernetes/local-dev/releases").exists())
+
     def test_prepare_rejects_cross_repository_controller(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

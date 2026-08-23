@@ -96,8 +96,21 @@ def load_manifest(path: Path) -> dict[str, Any]:
         "password",
         "secret",
     }
-    if any(token in str(key).lower() for key in manifest for token in forbidden_keys):
-        fail("release manifest contains a forbidden top-level field")
+    def contains_forbidden_key(value: Any) -> bool:
+        """Reject sensitive field names at every object depth."""
+
+        if isinstance(value, dict):
+            return any(
+                any(token in str(key).lower() for token in forbidden_keys)
+                or contains_forbidden_key(nested)
+                for key, nested in value.items()
+            )
+        if isinstance(value, list):
+            return any(contains_forbidden_key(item) for item in value)
+        return False
+
+    if contains_forbidden_key(manifest):
+        fail("release manifest contains a forbidden field")
     return manifest
 
 
@@ -216,7 +229,9 @@ def prepare(
 
     if (
         subprocess.run(
-            ["git", "diff", "--quiet", "--", str(DEPLOYMENT)], cwd=repo, check=False
+            ["git", "diff", "--quiet", "HEAD", "--", str(DEPLOYMENT)],
+            cwd=repo,
+            check=False,
         ).returncode
         != 0
     ):
