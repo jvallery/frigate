@@ -91,26 +91,37 @@ jobs:
       - name: Generate and prove runtime version assets
         run: |
           set -euo pipefail
-          make version
-          base_version="$(sed -n 's/^VERSION = //p' Makefile)"
-          [[ "${base_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          short_sha="$(git log -1 --pretty=format:%h "${SOURCE_SHA}")"
-          export RUNTIME_VERSION="${base_version}-${short_sha}"
-          test "$(cat frigate/version.py)" = "VERSION = \"${base_version}-${short_sha}\""
-          test "$(cat web/.env)" = "VITE_GIT_COMMIT_HASH=${short_sha}"
           PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
           import importlib.util
           import os
+          import re
+          import subprocess
           from pathlib import Path
 
+          source_sha = os.environ["SOURCE_SHA"]
+          makefile = Path("Makefile").read_text(encoding="utf-8")
+          match = re.search(r"(?m)^VERSION = ([0-9]+\.[0-9]+\.[0-9]+)$", makefile)
+          if match is None:
+              raise SystemExit("Makefile has no canonical Frigate version")
+          short_sha = subprocess.run(
+              ["git", "log", "-1", "--pretty=format:%h", source_sha],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          runtime_version = f"{match.group(1)}-{short_sha}"
           path = Path("frigate/version.py")
+          path.write_text(f'VERSION = "{runtime_version}"\n', encoding="utf-8")
+          Path("web/.env").write_text(
+              f"VITE_GIT_COMMIT_HASH={short_sha}\n",
+              encoding="utf-8",
+          )
           spec = importlib.util.spec_from_file_location("release_runtime_version", path)
           if spec is None or spec.loader is None:
               raise SystemExit("runtime version module is not importable")
           module = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(module)
-          expected = os.environ["RUNTIME_VERSION"]
-          if module.VERSION != expected:
+          if module.VERSION != runtime_version:
               raise SystemExit("runtime version module disagrees with exact source")
           PY
 
