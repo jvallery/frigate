@@ -88,6 +88,32 @@ jobs:
             --release-id "${RELEASE_ID}"
           python3 .github/scripts/verify_downstream_patch_ledger.py
 
+      - name: Generate and prove runtime version assets
+        run: |
+          set -euo pipefail
+          make version
+          base_version="$(sed -n 's/^VERSION = //p' Makefile)"
+          [[ "${base_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          short_sha="$(git log -1 --pretty=format:%h "${SOURCE_SHA}")"
+          export RUNTIME_VERSION="${base_version}-${short_sha}"
+          test "$(cat frigate/version.py)" = "VERSION = \"${base_version}-${short_sha}\""
+          test "$(cat web/.env)" = "VITE_GIT_COMMIT_HASH=${short_sha}"
+          PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+
+          path = Path("frigate/version.py")
+          spec = importlib.util.spec_from_file_location("release_runtime_version", path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("runtime version module is not importable")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          expected = os.environ["RUNTIME_VERSION"]
+          if module.VERSION != expected:
+              raise SystemExit("runtime version module disagrees with exact source")
+          PY
+
       - name: Install checksum-pinned Docker CLI and Buildx
         env:
           DOCKER_VERSION: 29.7.2
