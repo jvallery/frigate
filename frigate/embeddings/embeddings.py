@@ -35,6 +35,11 @@ from .onnx.jina_v2_embedding import JinaV2Embedding
 logger = logging.getLogger(__name__)
 
 
+def get_jina_v1_device(model_size: str, configured_device: str | None) -> str:
+    """Keep Jina v1 text and vision inference on the same configured device."""
+    return configured_device or ("GPU" if model_size == "large" else "CPU")
+
+
 def get_metadata(event: Event) -> dict:
     """Extract valid event metadata."""
     event_dict = model_to_dict(event)
@@ -142,16 +147,19 @@ class Embeddings:
             )
         else:
             # Default to jinav1
+            device = get_jina_v1_device(
+                config.semantic_search.model_size,
+                config.semantic_search.device,
+            )
             self.text_embedding = JinaV1TextEmbedding(
                 model_size=config.semantic_search.model_size,
                 requestor=self.requestor,
-                device="CPU",
+                device=device,
             )
             self.vision_embedding = JinaV1ImageEmbedding(
                 model_size=config.semantic_search.model_size,
                 requestor=self.requestor,
-                device=config.semantic_search.device
-                or ("GPU" if config.semantic_search.model_size == "large" else "CPU"),
+                device=device,
             )
 
     def update_stats(self) -> None:
