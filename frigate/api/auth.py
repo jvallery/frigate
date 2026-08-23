@@ -1247,7 +1247,16 @@ async def get_allowed_cameras_for_filter(request: Request):
     """Dependency to get allowed_cameras for filtering lists."""
     current_user = await get_current_user(request)
     if isinstance(current_user, JSONResponse):
-        return []  # Unauthorized: no cameras
+        detail = "Authentication required"
+        try:
+            error_payload = json.loads(current_user.body)
+            detail = (
+                error_payload.get("message") or error_payload.get("detail") or detail
+            )
+        except Exception:
+            pass
+
+        raise HTTPException(status_code=current_user.status_code, detail=detail)
 
     role = current_user["role"]
     all_camera_names = set(request.app.frigate_config.cameras.keys())

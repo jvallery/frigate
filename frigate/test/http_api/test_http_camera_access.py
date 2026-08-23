@@ -505,3 +505,13 @@ class TestReviewSummaryAccess(BaseTestHttp):
 
     def test_restricted_role_blocked(self):
         assert self._summarize_as_role("limited_user").status_code == 403
+
+    def test_missing_auth_with_no_cameras_blocked(self):
+        """An empty camera set must not turn failed authentication into access."""
+        self.app.dependency_overrides.pop(get_allowed_cameras_for_filter, None)
+        self.app.frigate_config.cameras = {}
+
+        with TestClient(self.app, raise_server_exceptions=False) as client:
+            response = client.post("/review/summarize/start/0/end/9999999999")
+
+        assert response.status_code == 401
