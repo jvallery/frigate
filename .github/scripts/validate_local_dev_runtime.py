@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, NoReturn
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "deploy/kubernetes/local-dev"
 KUSTOMIZATION = BASE / "kustomization.yaml"
@@ -49,46 +51,19 @@ def require(condition: bool, message: str) -> None:
         fail(message)
 
 
-def decode_json_stream(body: str) -> list[dict[str, Any]]:
-    """Decode the concatenated JSON objects emitted by kubectl."""
+def yaml_objects(body: str) -> list[dict[str, Any]]:
+    """Decode rendered Kubernetes YAML without cluster discovery."""
 
-    decoder = json.JSONDecoder()
-    documents: list[dict[str, Any]] = []
-    offset = 0
-    while offset < len(body):
-        while offset < len(body) and body[offset].isspace():
-            offset += 1
-        if offset == len(body):
-            break
-        value, offset = decoder.raw_decode(body, offset)
-        require(isinstance(value, dict), "kubectl emitted a non-object document")
-        documents.append(value)
-    return documents
-
-
-def kubectl_objects(body: str) -> list[dict[str, Any]]:
-    """Use kubectl's Kubernetes decoder without contacting a cluster."""
-
-    result = subprocess.run(
-        [
-            "kubectl",
-            "create",
-            "--dry-run=client",
-            "--validate=false",
-            "-o",
-            "json",
-            "-f",
-            "-",
-        ],
-        input=body,
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-        check=False,
+    try:
+        values = list(yaml.safe_load_all(body))
+    except yaml.YAMLError:
+        fail("desired state is not valid YAML")
+    documents = [value for value in values if value is not None]
+    require(
+        all(isinstance(value, dict) for value in documents),
+        "rendered desired state contains a non-object document",
     )
-    if result.returncode != 0:
-        fail("kubectl could not decode desired state")
-    return decode_json_stream(result.stdout)
+    return documents
 
 
 def render() -> tuple[str, list[dict[str, Any]]]:
@@ -103,7 +78,7 @@ def render() -> tuple[str, list[dict[str, Any]]]:
     )
     if result.returncode != 0 or not result.stdout.strip():
         fail("kubectl kustomize failed")
-    return result.stdout, kubectl_objects(result.stdout)
+    return result.stdout, yaml_objects(result.stdout)
 
 
 def object_by_kind(documents: list[dict[str, Any]], kind: str) -> dict[str, Any]:
@@ -429,7 +404,7 @@ def validate_staged_ingress() -> None:
     """Validate the single route artifact while proving it is not rendered."""
 
     require(STAGED_INGRESS.is_file(), "staged Ingress artifact is missing")
-    documents = kubectl_objects(STAGED_INGRESS.read_text(encoding="utf-8"))
+    documents = yaml_objects(STAGED_INGRESS.read_text(encoding="utf-8"))
     require(len(documents) == 1, "staged route contains extra objects")
     ingress = documents[0]
     require(ingress.get("kind") == "Ingress", "staged route is not an Ingress")
