@@ -15,6 +15,14 @@ on:
         description: Annotated tag and immutable release identifier
         required: true
         type: string
+      environment:
+        description: Initial Sentinel target; later targets reuse this release in Sentinel
+        required: true
+        default: local-prod
+        type: choice
+        options:
+          - local-prod
+          - local-dev
 
 permissions:
   contents: write
@@ -35,6 +43,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
       RELEASE_ID: ${{ inputs.release_id }}
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Prove exact protected release identity is unused
@@ -46,6 +55,7 @@ jobs:
           test "${GITHUB_REF}" = "refs/heads/vallery/prod"
           test "${REF_PROTECTED}" = "true"
           test "${GITHUB_SHA}" = "${SOURCE_SHA}"
+          [[ "${TARGET_ENVIRONMENT}" = "local-prod" || "${TARGET_ENVIRONMENT}" = "local-dev" ]]
           if gh release view "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             echo "::error::release ${RELEASE_ID} already exists and is immutable"
             exit 41
@@ -72,6 +82,7 @@ jobs:
       STANDARD_DIGEST: ${{ needs.build.outputs.standard_digest }}
       TENSORRT_DIGEST: ${{ needs.build.outputs.tensorrt_digest }}
       MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Prove the publisher is running reviewed protected workflow code
@@ -86,6 +97,7 @@ jobs:
           [[ "${STANDARD_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${TENSORRT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${MANIFEST_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${TARGET_ENVIRONMENT}" = "local-prod" || "${TARGET_ENVIRONMENT}" = "local-dev" ]]
 
       - name: Download the exact build evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -181,6 +193,9 @@ jobs:
           SENTINEL_TOKEN: ${{ steps.sentinel-token.outputs.token }}
         run: |
           set -euo pipefail
+          # This is the initial promotion. Subsequent environments reuse the
+          # immutable release through Sentinel's promotion-only workflow,
+          # which re-verifies this tag, run, manifest, digests, and attestations.
           payload="$(jq -nc \
             --arg ref "main" \
             --arg release_id "${RELEASE_ID}" \
@@ -191,7 +206,8 @@ jobs:
             --arg manifest_sha256 "${MANIFEST_SHA256}" \
             --arg manifest_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_ID}/release-manifest.json" \
             --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            '{ref:$ref,inputs:{release_id:$release_id,source_sha:$source_sha,upstream_sha:$upstream_sha,standard_digest:$standard_digest,tensorrt_digest:$tensorrt_digest,manifest_sha256:$manifest_sha256,manifest_url:$manifest_url,run_url:$run_url}}')"
+            --arg environment "${TARGET_ENVIRONMENT}" \
+            '{ref:$ref,inputs:{release_id:$release_id,source_sha:$source_sha,upstream_sha:$upstream_sha,standard_digest:$standard_digest,tensorrt_digest:$tensorrt_digest,manifest_sha256:$manifest_sha256,manifest_url:$manifest_url,run_url:$run_url,environment:$environment}}')"
           GH_TOKEN="${SENTINEL_TOKEN}" gh api --silent --method POST \
             repos/jvallery/sentinel/actions/workflows/frigate-promotion.yml/dispatches \
             --input - <<<"${payload}"

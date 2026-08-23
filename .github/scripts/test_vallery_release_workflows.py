@@ -127,6 +127,11 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
             "repos/jvallery/sentinel/actions/workflows/frigate-promotion.yml/dispatches",
             body,
         )
+        self.assertIn("default: local-prod", body)
+        self.assertIn('--arg environment "${TARGET_ENVIRONMENT}"', body)
+        self.assertIn("environment:$environment", body)
+        self.assertIn("Subsequent environments reuse the", body)
+        self.assertIn("Sentinel's promotion-only workflow", body)
         self.assertNotIn("repos/jvallery/sentinel/dispatches", body)
         self.assertNotIn('event_type:"frigate-release"', body)
         self.assertNotIn("KUBECONFIG", body)
