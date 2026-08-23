@@ -35,9 +35,12 @@ from .onnx.jina_v2_embedding import JinaV2Embedding
 logger = logging.getLogger(__name__)
 
 
-def get_jina_v1_device(model_size: str, configured_device: str | None) -> str:
-    """Keep Jina v1 text and vision inference on the same configured device."""
-    return configured_device or ("GPU" if model_size == "large" else "CPU")
+def get_jina_v1_devices(
+    model_size: str, configured_device: str | None
+) -> tuple[str, str]:
+    """Resolve separate devices for Jina v1 text and vision inference."""
+    vision_device = configured_device or ("GPU" if model_size == "large" else "CPU")
+    return "CPU", vision_device
 
 
 def get_metadata(event: Event) -> dict:
@@ -147,19 +150,19 @@ class Embeddings:
             )
         else:
             # Default to jinav1
-            device = get_jina_v1_device(
+            text_device, vision_device = get_jina_v1_devices(
                 config.semantic_search.model_size,
                 config.semantic_search.device,
             )
             self.text_embedding = JinaV1TextEmbedding(
                 model_size=config.semantic_search.model_size,
                 requestor=self.requestor,
-                device=device,
+                device=text_device,
             )
             self.vision_embedding = JinaV1ImageEmbedding(
                 model_size=config.semantic_search.model_size,
                 requestor=self.requestor,
-                device=device,
+                device=vision_device,
             )
 
     def update_stats(self) -> None:
