@@ -26,6 +26,7 @@ REQUIRED_CONCERNS = {
     "genai_description_resilience",
     "arcface_cuda_recovery",
     "production_migration_history",
+    "camera_filter_authentication",
 }
 REQUIRED_PATCH_FIELDS = {
     "id",
