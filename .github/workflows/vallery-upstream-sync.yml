@@ -146,12 +146,13 @@ jobs:
               -f upstream_sha="${new_sha}"
             if [[ "${branch}" == "dev" ]]; then
               moved_dev="${new_sha}"
+              echo "moved_dev=${moved_dev}" >> "${GITHUB_OUTPUT}"
             fi
           done
           echo "moved_dev=${moved_dev}" >> "${GITHUB_OUTPUT}"
 
       - name: Create one reviewed upstream intake PR
-        if: steps.mirrors.outputs.moved_dev != '' && inputs.dry_run != true
+        if: always() && steps.mirrors.outputs.moved_dev != '' && inputs.dry_run != true
         env:
           UPSTREAM_SHA: ${{ steps.mirrors.outputs.moved_dev }}
           MIRROR_KEY_PATH: ${{ steps.mirror-key.outputs.key_path }}

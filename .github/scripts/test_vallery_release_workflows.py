@@ -16,6 +16,7 @@ BUILD_WORKFLOW = ROOT / ".github/workflows/vallery-tensorrt-build.yml"
 RELEASE_WORKFLOW = ROOT / ".github/workflows/vallery-release.yml"
 RETIREMENT_WORKFLOW = ROOT / ".github/workflows/upstream-patch-retirement.yml"
 INTEGRATION_WORKFLOW = ROOT / ".github/workflows/vallery-integration.yml"
+SYNC_WORKFLOW = ROOT / ".github/workflows/vallery-upstream-sync.yml"
 BAKE = ROOT / ".vallery/release-build.hcl"
 SCHEMA = ROOT / ".vallery/release-manifest.schema.json"
 MAIN_DOCKERFILE = ROOT / "docker/main/Dockerfile"
@@ -105,6 +106,7 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
             RELEASE_WORKFLOW,
             RETIREMENT_WORKFLOW,
             INTEGRATION_WORKFLOW,
+            SYNC_WORKFLOW,
         ):
             for line in workflow.read_text(encoding="utf-8").splitlines():
                 match = re.search(r"\buses:\s*([^\s]+)", line)
@@ -176,6 +178,19 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         self.assertIn("--force-with-lease=", body)
         self.assertIn("--state open", body)
         self.assertNotIn("repos/blakeblackshear/frigate", body)
+
+    def test_verified_dev_intake_survives_later_branch_failure(self) -> None:
+        body = SYNC_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            'moved_dev="${new_sha}"\n'
+            '              echo "moved_dev=${moved_dev}" >> "${GITHUB_OUTPUT}"',
+            body,
+        )
+        self.assertIn(
+            "if: always() && steps.mirrors.outputs.moved_dev != '' "
+            "&& inputs.dry_run != true",
+            body,
+        )
 
     def test_bake_group_contains_exact_release_variants(self) -> None:
         body = BAKE.read_text(encoding="utf-8")
