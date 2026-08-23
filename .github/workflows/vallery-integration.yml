@@ -86,6 +86,7 @@ jobs:
       - name: Verify protected release and artifact contracts
         run: |
           python3 .github/scripts/test_vallery_release_workflows.py
+          python3 .github/scripts/test_local_dev_delivery.py
           python3 .github/scripts/test_plan_upstream_patch_retirement.py
           python3 -m json.tool .vallery/release-manifest.schema.json >/dev/null
 

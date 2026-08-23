@@ -1,4 +1,4 @@
-name: Vallery release
+name: Vallery immutable artifact release
 
 on:
   workflow_dispatch:
@@ -15,14 +15,6 @@ on:
         description: Annotated tag and immutable release identifier
         required: true
         type: string
-      environment:
-        description: Initial Sentinel target; later targets reuse this release in Sentinel
-        required: true
-        default: local-prod
-        type: choice
-        options:
-          - local-prod
-          - local-dev
 
 permissions:
   contents: write
@@ -32,7 +24,7 @@ permissions:
   artifact-metadata: write
 
 concurrency:
-  group: vallery-release-${{ inputs.release_id }}
+  group: vallery-artifact-release-${{ inputs.release_id }}
   cancel-in-progress: false
 
 jobs:
@@ -43,7 +35,6 @@ jobs:
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
       RELEASE_ID: ${{ inputs.release_id }}
-      TARGET_ENVIRONMENT: ${{ inputs.environment }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Prove exact protected release identity is unused
@@ -55,7 +46,6 @@ jobs:
           test "${GITHUB_REF}" = "refs/heads/vallery/prod"
           test "${REF_PROTECTED}" = "true"
           test "${GITHUB_SHA}" = "${SOURCE_SHA}"
-          [[ "${TARGET_ENVIRONMENT}" = "local-prod" || "${TARGET_ENVIRONMENT}" = "local-dev" ]]
           if gh release view "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             echo "::error::release ${RELEASE_ID} already exists and is immutable"
             exit 41
@@ -68,10 +58,11 @@ jobs:
       source_sha: ${{ inputs.source_sha }}
       upstream_sha: ${{ inputs.upstream_sha }}
       release_id: ${{ inputs.release_id }}
-    secrets: inherit
+    secrets:
+      zot_push_registry: ${{ secrets.VALLERY_ZOT_PUSH_REGISTRY }}
 
   publish:
-    name: Publish annotated release and dispatch Sentinel
+    name: Publish immutable annotated release
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -82,7 +73,6 @@ jobs:
       STANDARD_DIGEST: ${{ needs.build.outputs.standard_digest }}
       TENSORRT_DIGEST: ${{ needs.build.outputs.tensorrt_digest }}
       MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
-      TARGET_ENVIRONMENT: ${{ inputs.environment }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Prove the publisher is running reviewed protected workflow code
@@ -97,7 +87,6 @@ jobs:
           [[ "${STANDARD_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${TENSORRT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${MANIFEST_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "${TARGET_ENVIRONMENT}" = "local-prod" || "${TARGET_ENVIRONMENT}" = "local-dev" ]]
 
       - name: Download the exact build evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -124,28 +113,6 @@ jobs:
             release-evidence/release-manifest.json >/dev/null
           test "$(jq -er .promotion.cluster_mutated_by_build release-evidence/release-manifest.json)" = "false"
 
-      - name: Mint and prove the Sentinel-only workflow-dispatch token
-        id: sentinel-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.SENTINEL_PROMOTION_APP_ID }}
-          private-key: ${{ secrets.SENTINEL_PROMOTION_APP_PRIVATE_KEY }}
-          owner: jvallery
-          repositories: sentinel
-          permission-actions: write
-          permission-contents: read
-
-      - name: Prove exact Sentinel installation and active workflow
-        env:
-          GH_TOKEN: ${{ steps.sentinel-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          repositories="$(gh api /installation/repositories --paginate \
-            --jq '[.repositories[].full_name] | sort | join(",")')"
-          test "${repositories}" = "jvallery/sentinel"
-          test "$(gh api repos/jvallery/sentinel/actions/workflows/frigate-promotion.yml \
-            --jq .state)" = "active"
-
       - name: Create or verify the annotated release tag
         run: |
           set -euo pipefail
@@ -167,47 +134,6 @@ jobs:
       - name: Publish the immutable GitHub release
         run: |
           set -euo pipefail
-          notes="Source: ${SOURCE_SHA}\nUpstream: ${UPSTREAM_SHA}\nTensorRT: ghcr.io/jvallery/frigate@${TENSORRT_DIGEST}\nZot: registry.vallery.net/jvallery/frigate@${TENSORRT_DIGEST}\nBuild: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          if gh release view "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            test "$(gh release view "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" \
-              --json tagName,isDraft,isPrerelease \
-              --jq '[.tagName,(.isDraft|tostring),(.isPrerelease|tostring)] | join("/")')" \
-              = "${RELEASE_ID}/false/false"
-            mkdir -p "${RUNNER_TEMP}/existing-release"
-            gh release download "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" \
-              --dir "${RUNNER_TEMP}/existing-release"
-            expected="$(find release-evidence -maxdepth 1 -type f -printf '%f\n' | sort)"
-            actual="$(find "${RUNNER_TEMP}/existing-release" -maxdepth 1 -type f -printf '%f\n' | sort)"
-            test "${actual}" = "${expected}"
-            while IFS= read -r name; do
-              cmp "release-evidence/${name}" "${RUNNER_TEMP}/existing-release/${name}"
-            done <<<"${expected}"
-            echo "reusing exact immutable release assets after a failed dispatch attempt"
-          else
-            gh release create "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
-              --title "Frigate ${RELEASE_ID}" --notes "${notes}" release-evidence/*
-          fi
-
-      - name: Dispatch the verified release to Sentinel
-        env:
-          SENTINEL_TOKEN: ${{ steps.sentinel-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          # This is the initial promotion. Subsequent environments reuse the
-          # immutable release through Sentinel's promotion-only workflow,
-          # which re-verifies this tag, run, manifest, digests, and attestations.
-          payload="$(jq -nc \
-            --arg ref "main" \
-            --arg release_id "${RELEASE_ID}" \
-            --arg source_sha "${SOURCE_SHA}" \
-            --arg upstream_sha "${UPSTREAM_SHA}" \
-            --arg standard_digest "${STANDARD_DIGEST}" \
-            --arg tensorrt_digest "${TENSORRT_DIGEST}" \
-            --arg manifest_sha256 "${MANIFEST_SHA256}" \
-            --arg manifest_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_ID}/release-manifest.json" \
-            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --arg environment "${TARGET_ENVIRONMENT}" \
-            '{ref:$ref,inputs:{release_id:$release_id,source_sha:$source_sha,upstream_sha:$upstream_sha,standard_digest:$standard_digest,tensorrt_digest:$tensorrt_digest,manifest_sha256:$manifest_sha256,manifest_url:$manifest_url,run_url:$run_url,environment:$environment}}')"
-          GH_TOKEN="${SENTINEL_TOKEN}" gh api --silent --method POST \
-            repos/jvallery/sentinel/actions/workflows/frigate-promotion.yml/dispatches \
-            --input - <<<"${payload}"
+          notes="Source: ${SOURCE_SHA}\nUpstream: ${UPSTREAM_SHA}\nStandard: ghcr.io/jvallery/frigate@${STANDARD_DIGEST}\nTensorRT: ghcr.io/jvallery/frigate@${TENSORRT_DIGEST}\nBuild: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh release create "${RELEASE_ID}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
+            --title "Frigate ${RELEASE_ID}" --notes "${notes}" release-evidence/*

@@ -70,6 +70,10 @@ release manifest and one Frigate Actions run URL. It selects only the
 value-blind manifest, receipt, forward patch, and exact inverse below
 `releases/<release-id>/`.
 
+The environment-neutral release factory, Frigate-only App boundary, verified
+promotion PR, independent Sentinel selection interface, and reviewed rollback
+procedure are defined in [DELIVERY.md](DELIVERY.md).
+
 Private runtime evidence remains in its private owning repository. Image
 inverses never restore database or media state. Promotions and inverses become
 effective only after a reviewed merge and Argo reconciliation; never apply this
