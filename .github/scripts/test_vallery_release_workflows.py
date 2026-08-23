@@ -14,12 +14,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BUILD_WORKFLOW = ROOT / ".github/workflows/vallery-tensorrt-build.yml"
 RELEASE_WORKFLOW = ROOT / ".github/workflows/vallery-release.yml"
+DEV_PROMOTION_WORKFLOW = ROOT / ".github/workflows/frigate-dev-promotion.yml"
 RETIREMENT_WORKFLOW = ROOT / ".github/workflows/upstream-patch-retirement.yml"
 INTEGRATION_WORKFLOW = ROOT / ".github/workflows/vallery-integration.yml"
 SYNC_WORKFLOW = ROOT / ".github/workflows/vallery-upstream-sync.yml"
 BAKE = ROOT / ".vallery/release-build.hcl"
 SCHEMA = ROOT / ".vallery/release-manifest.schema.json"
 MAIN_DOCKERFILE = ROOT / "docker/main/Dockerfile"
+DEV_DELIVERY_CONTRACT = ROOT / "deploy/kubernetes/local-dev/DELIVERY.md"
 
 
 def load_module(name: str, path: Path):
@@ -104,6 +106,7 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         for workflow in (
             BUILD_WORKFLOW,
             RELEASE_WORKFLOW,
+            DEV_PROMOTION_WORKFLOW,
             RETIREMENT_WORKFLOW,
             INTEGRATION_WORKFLOW,
             SYNC_WORKFLOW,
@@ -118,33 +121,114 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
                     f"{workflow.name}: unpinned action {match.group(1)}",
                 )
 
-    def test_release_dispatch_is_sentinel_scoped(self) -> None:
+    def test_release_factory_is_environment_neutral_and_publish_only(self) -> None:
         body = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("repositories: sentinel", body)
-        self.assertIn("permission-actions: write", body)
-        self.assertIn("permission-contents: read", body)
+        self.assertIn("name: Vallery immutable artifact release", body)
+        self.assertIn("group: vallery-artifact-release-${{ inputs.release_id }}", body)
+        self.assertNotIn("local-dev", body)
+        self.assertNotIn("local-prod", body)
+        self.assertNotIn("TARGET_ENVIRONMENT", body)
+        self.assertNotIn("SENTINEL_PROMOTION", body)
+        self.assertNotIn("jvallery/sentinel", body)
+        self.assertNotIn("/dispatches", body)
+        self.assertNotIn("secrets: inherit", body)
+        self.assertIn("zot_push_registry: ${{ secrets.VALLERY_ZOT_PUSH_REGISTRY }}", body)
+        self.assertIn("Publish immutable annotated release", body)
+        self.assertNotIn("--clobber", body)
+
+    def test_no_workflow_accepts_an_environment_selector(self) -> None:
+        for workflow in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            body = workflow.read_text(encoding="utf-8")
+            self.assertNotIn(
+                "\n      environment:\n",
+                body,
+                f"{workflow.name} accepts an environment input",
+            )
+
+    def test_reusable_build_receives_only_explicit_zot_input(self) -> None:
+        body = BUILD_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("    secrets:\n      zot_push_registry:", body)
+        self.assertIn("required: true", body)
+        self.assertIn("ZOT_PUSH_REGISTRY: ${{ secrets.zot_push_registry }}", body)
+        self.assertNotIn("secrets.VALLERY_ZOT_PUSH_REGISTRY", body)
+        self.assertNotIn("SENTINEL", body)
+
+    def test_dev_promotion_has_a_frigate_only_writer_boundary(self) -> None:
+        body = DEV_PROMOTION_WORKFLOW.read_text(encoding="utf-8")
+        writer = body.split("  prepare-pr:\n", 1)[1]
+        self.assertIn("name: Frigate development promotion", body)
+        self.assertIn("group: frigate-dev-promotion\n", body)
+        self.assertIn("environment: frigate-dev-promotion", body)
+        self.assertIn("secrets.FRIGATE_DEV_PROMOTION_APP_ID", body)
+        self.assertIn("secrets.FRIGATE_DEV_PROMOTION_PRIVATE_KEY", body)
+        self.assertIn("repositories: frigate", body)
+        self.assertIn("permission-metadata: read", body)
+        self.assertIn("permission-contents: write", body)
+        self.assertIn("permission-pull-requests: write", body)
+        self.assertNotIn("permission-actions: write", body)
         self.assertIn("/installation/repositories", body)
-        self.assertIn('test "${repositories}" = "jvallery/sentinel"', body)
+        self.assertIn('test "${repositories}" = "jvallery/frigate"', body)
         self.assertIn(
-            "repos/jvallery/sentinel/actions/workflows/frigate-promotion.yml/dispatches",
+            'test "${APP_SLUG}" = "vallery-frigate-dev-promotion"', body
+        )
+        self.assertIn(
+            'test "${WRITER_INSTALLATION}" = "${INVENTORY_INSTALLATION}"', body
+        )
+        self.assertIn("if gh api repos/jvallery/sentinel", body)
+        self.assertNotIn("SENTINEL_PROMOTION", body)
+        self.assertNotIn("sentinel-private-preflight", body)
+        self.assertNotIn("build-trusted", body)
+        self.assertNotIn("/run/secrets", body)
+        self.assertEqual(body.count("runs-on: ubuntu-24.04"), 2)
+        self.assertEqual(
+            set(re.findall(r"secrets\.([A-Z0-9_]+)", writer)),
+            {
+                "FRIGATE_DEV_PROMOTION_APP_ID",
+                "FRIGATE_DEV_PROMOTION_PRIVATE_KEY",
+            },
+        )
+        self.assertNotIn("github.token", writer)
+        self.assertEqual(
+            body.count("actions/create-github-app-token@"),
+            2,
+            "inventory and writer tokens must be independently scoped",
+        )
+
+    def test_dev_promotion_is_cross_repository_and_cross_path_closed(self) -> None:
+        body = DEV_PROMOTION_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            'test "${WORKFLOW_REF}" = "jvallery/frigate/.github/workflows/'
+            'frigate-dev-promotion.yml@refs/heads/vallery/prod"',
             body,
         )
-        self.assertIn("default: local-prod", body)
-        self.assertIn('--arg environment "${TARGET_ENVIRONMENT}"', body)
-        self.assertIn("environment:$environment", body)
-        self.assertIn("Subsequent environments reuse the", body)
-        self.assertIn("Sentinel's promotion-only workflow", body)
-        self.assertNotIn("repos/jvallery/sentinel/dispatches", body)
-        self.assertNotIn('event_type:"frigate-release"', body)
-        self.assertNotIn("KUBECONFIG", body)
-        self.assertNotIn("kubectl", body)
-
-    def test_failed_dispatch_can_reuse_only_byte_identical_release_assets(self) -> None:
-        body = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("reusing exact immutable release assets", body)
+        self.assertIn("prepare_local_dev_promotion.py", body)
+        self.assertIn('expected="$(printf \'%s\\n\' \\', body)
+        self.assertIn("deploy/kubernetes/local-dev/deployment.yaml", body)
+        self.assertIn('"${evidence}/inverse.patch"', body)
         self.assertIn('test "${actual}" = "${expected}"', body)
-        self.assertIn('cmp "release-evidence/${name}"', body)
-        self.assertNotIn("--clobber", body)
+        self.assertNotIn("platform/kubernetes/frigate", body)
+        self.assertNotIn("deploy/argocd", body)
+        self.assertNotIn("gh pr merge", body)
+        self.assertNotIn("kubectl apply", body)
+
+    def test_dev_promotion_verifies_only_the_standard_variant(self) -> None:
+        body = DEV_PROMOTION_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("Verify public standard release", body)
+        self.assertIn("--standard-digest", body)
+        self.assertIn("ghcr.io/jvallery/frigate@${STANDARD_DIGEST}", body)
+        self.assertNotIn("TENSORRT_DIGEST", body)
+        self.assertNotIn("tensorrt_digest:", body)
+        self.assertIn("gh attestation verify", body)
+        self.assertIn("vallery-tensorrt-build.yml", body)
+
+    def test_production_selection_contract_is_pull_based_and_independent(self) -> None:
+        body = DEV_DELIVERY_CONTRACT.read_text(encoding="utf-8")
+        self.assertIn("Independent Sentinel production selection", body)
+        self.assertIn("pulling immutable public release", body)
+        self.assertIn("does not receive a dispatch", body)
+        self.assertIn("release-manifest.sha256", body)
+        self.assertIn("standard and TensorRT GitHub image attestations", body)
+        self.assertIn("No Frigate development token", body)
 
     def test_release_ids_are_immutable_before_build_or_asset_publication(self) -> None:
         body = RELEASE_WORKFLOW.read_text(encoding="utf-8")

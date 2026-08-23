@@ -36,6 +36,14 @@ EXPECTED_MIDDLEWARES = (
     "network-infra-ak-forwardauth@kubernetescrd,"
     "network-infra-security-headers@kubernetescrd"
 )
+ADOPTED_ROLLBACK_BASELINE = {
+    "release_id": "v0.18.0-vallery.20260823.4",
+    "source_sha": "fcb89ae464c939fbe47f9a35e5e8f91c765509e0",
+    "image": (
+        "registry.vallery.net/jvallery/frigate@"
+        "sha256:a1a3f99d71bc16ec43693bc8daba94b3e3bfccb146b5771a09ff9704c6cbe9d4"
+    ),
+}
 
 
 def fail(message: str) -> NoReturn:
@@ -436,6 +444,22 @@ def validate_release_ledger(deployment: dict[str, Any]) -> None:
     annotations = metadata.get("annotations") or {}
     labels = metadata.get("labels") or {}
     release_id = str(annotations.get("vallery.net/release-id") or "")
+    image = (
+        deployment.get("spec", {})
+        .get("template", {})
+        .get("spec", {})
+        .get("containers", [{}])[0]
+        .get("image")
+    )
+    if release_id == ADOPTED_ROLLBACK_BASELINE["release_id"]:
+        require(
+            labels.get("vallery.net/source-sha")
+            == ADOPTED_ROLLBACK_BASELINE["source_sha"]
+            and image == ADOPTED_ROLLBACK_BASELINE["image"],
+            "adopted rollback baseline identity drifted",
+        )
+        return
+
     evidence = BASE / "releases" / release_id
     require(evidence.is_dir(), "current release ledger entry is missing")
     require(
@@ -465,13 +489,6 @@ def validate_release_ledger(deployment: dict[str, Any]) -> None:
         "release source disagrees with Deployment label",
     )
     digest = manifest.get("artifacts", {}).get("standard-amd64", {}).get("digest")
-    image = (
-        deployment.get("spec", {})
-        .get("template", {})
-        .get("spec", {})
-        .get("containers", [{}])[0]
-        .get("image")
-    )
     require(
         image == f"registry.vallery.net/jvallery/frigate@{digest}",
         "release standard digest disagrees with Deployment",

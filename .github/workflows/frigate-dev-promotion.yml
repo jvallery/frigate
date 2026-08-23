@@ -1,0 +1,365 @@
+name: Frigate development promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Exact immutable jvallery/frigate release ID
+        required: true
+        type: string
+      source_sha:
+        description: Exact protected vallery/prod source SHA
+        required: true
+        type: string
+      upstream_sha:
+        description: Exact selected upstream Frigate SHA
+        required: true
+        type: string
+      standard_digest:
+        description: Exact standard amd64 OCI digest
+        required: true
+        type: string
+      manifest_sha256:
+        description: SHA-256 of the signed public release manifest
+        required: true
+        type: string
+      manifest_url:
+        description: Canonical jvallery/frigate release-manifest URL
+        required: true
+        type: string
+      run_url:
+        description: Originating protected release workflow run
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: frigate-dev-promotion
+  cancel-in-progress: false
+
+jobs:
+  verify-release:
+    name: Verify public standard release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      attestations: read
+      packages: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+      STANDARD_DIGEST: ${{ inputs.standard_digest }}
+      MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+      MANIFEST_URL: ${{ inputs.manifest_url }}
+      ORIGIN_RUN_URL: ${{ inputs.run_url }}
+    steps:
+      - name: Prove trusted development workflow origin and bounded inputs
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "jvallery/frigate"
+          test "${GITHUB_EVENT_NAME}" = "workflow_dispatch"
+          test "${GITHUB_REF}" = "refs/heads/vallery/prod"
+          test "${REF_PROTECTED}" = "true"
+          test "${WORKFLOW_REF}" = "jvallery/frigate/.github/workflows/frigate-dev-promotion.yml@refs/heads/vallery/prod"
+          [[ "${RELEASE_ID}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-vallery\.[0-9]{8}\.[1-9][0-9]*$ ]]
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${UPSTREAM_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${STANDARD_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${MANIFEST_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "${MANIFEST_URL}" = "https://github.com/jvallery/frigate/releases/download/${RELEASE_ID}/release-manifest.json"
+          [[ "${ORIGIN_RUN_URL}" =~ ^https://github\.com/jvallery/frigate/actions/runs/[1-9][0-9]*$ ]]
+          test -z "${KUBECONFIG:-}"
+          test -z "${VALLERY_RUNNER_PROFILE:-}"
+          test ! -e /production-data
+
+      - name: Check out exact trusted promotion code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download and verify the exact public release manifest
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/verified-release"
+          manifest="${RUNNER_TEMP}/verified-release/release-manifest.json"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "${MANIFEST_URL}" --output "${manifest}"
+          python3 .github/scripts/verify_local_dev_release.py \
+            --manifest "${manifest}" \
+            --release-id "${RELEASE_ID}" \
+            --source-sha "${SOURCE_SHA}" \
+            --upstream-sha "${UPSTREAM_SHA}" \
+            --standard-digest "${STANDARD_DIGEST}" \
+            --manifest-sha256 "${MANIFEST_SHA256}" \
+            --manifest-url "${MANIFEST_URL}" \
+            --run-url "${ORIGIN_RUN_URL}"
+
+      - name: Verify annotated tag, protected history, and release run
+        run: |
+          set -euo pipefail
+          tag_type="$(gh api "repos/jvallery/frigate/git/ref/tags/${RELEASE_ID}" --jq .object.type)"
+          tag_object="$(gh api "repos/jvallery/frigate/git/ref/tags/${RELEASE_ID}" --jq .object.sha)"
+          test "${tag_type}" = "tag"
+          test "$(gh api "repos/jvallery/frigate/git/tags/${tag_object}" --jq .object.type)" = "commit"
+          test "$(gh api "repos/jvallery/frigate/git/tags/${tag_object}" --jq .object.sha)" = "${SOURCE_SHA}"
+
+          fork_compare="$(gh api "repos/jvallery/frigate/compare/${SOURCE_SHA}...${GITHUB_SHA}")"
+          jq -e '.status == "identical" or .status == "ahead"' <<<"${fork_compare}" >/dev/null
+          upstream_compare="$(gh api "repos/jvallery/frigate/compare/${UPSTREAM_SHA}...${SOURCE_SHA}")"
+          jq -e '.status == "identical" or .status == "ahead"' <<<"${upstream_compare}" >/dev/null
+          test "$(gh api "repos/blakeblackshear/frigate/git/commits/${UPSTREAM_SHA}" --jq .sha)" = "${UPSTREAM_SHA}"
+
+          run_id="${ORIGIN_RUN_URL##*/}"
+          run="$(gh api "repos/jvallery/frigate/actions/runs/${run_id}")"
+          test "$(jq -er .repository.full_name <<<"${run}")" = "jvallery/frigate"
+          test "$(jq -er .event <<<"${run}")" = "workflow_dispatch"
+          test "$(jq -er .head_branch <<<"${run}")" = "vallery/prod"
+          test "$(jq -er .head_sha <<<"${run}")" = "${SOURCE_SHA}"
+          test "$(jq -er .status <<<"${run}")" = "completed"
+          test "$(jq -er .conclusion <<<"${run}")" = "success"
+          workflow_id="$(jq -er .workflow_id <<<"${run}")"
+          test "$(gh api "repos/jvallery/frigate/actions/workflows/${workflow_id}" --jq .path)" = ".github/workflows/vallery-release.yml"
+
+      - name: Verify signed manifest and exact standard GHCR digest
+        run: |
+          set -euo pipefail
+          manifest="${RUNNER_TEMP}/verified-release/release-manifest.json"
+          signer="jvallery/frigate/.github/workflows/vallery-tensorrt-build.yml"
+          source_ref="refs/heads/vallery/prod"
+          gh attestation verify "${manifest}" \
+            --repo jvallery/frigate \
+            --signer-workflow "${signer}" \
+            --source-ref "${source_ref}" \
+            --source-digest "${SOURCE_SHA}"
+          gh attestation verify "oci://ghcr.io/jvallery/frigate@${STANDARD_DIGEST}" \
+            --repo jvallery/frigate \
+            --signer-workflow "${signer}" \
+            --source-ref "${source_ref}" \
+            --source-digest "${SOURCE_SHA}"
+          observed="$(docker buildx imagetools inspect \
+            "ghcr.io/jvallery/frigate@${STANDARD_DIGEST}" \
+            --format '{{json .Manifest.Digest}}' | jq -er .)"
+          test "${observed}" = "${STANDARD_DIGEST}"
+
+      - name: Upload verified public release input
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-frigate-dev-release-${{ inputs.release_id }}
+          path: ${{ runner.temp }}/verified-release/release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+  prepare-pr:
+    name: Prepare development promotion PR and inverse
+    needs: verify-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: frigate-dev-promotion
+    permissions:
+      actions: read
+      contents: read
+    env:
+      RELEASE_ID: ${{ inputs.release_id }}
+      PROMOTION_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Mint a metadata-only full-installation inventory token
+        id: inventory-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.FRIGATE_DEV_PROMOTION_APP_ID }}
+          private-key: ${{ secrets.FRIGATE_DEV_PROMOTION_PRIVATE_KEY }}
+          owner: jvallery
+          permission-metadata: read
+
+      - name: Prove the complete single-repository installation boundary
+        env:
+          APP_SLUG: ${{ steps.inventory-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.inventory-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          test "${APP_SLUG}" = "vallery-frigate-dev-promotion"
+          repositories="$(gh api /installation/repositories --paginate \
+            --jq '[.repositories[].full_name] | sort | join(",")')"
+          test "${repositories}" = "jvallery/frigate"
+          test "$(gh api repos/jvallery/frigate --jq .full_name)" = "jvallery/frigate"
+          if gh api repos/jvallery/sentinel >/dev/null 2>&1; then
+            echo "::error::development writer unexpectedly reaches Sentinel"
+            exit 42
+          fi
+          test -z "${KUBECONFIG:-}"
+          test -z "${VALLERY_RUNNER_PROFILE:-}"
+          test ! -e /production-data
+
+      - name: Mint the repository-scoped development writer
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.FRIGATE_DEV_PROMOTION_APP_ID }}
+          private-key: ${{ secrets.FRIGATE_DEV_PROMOTION_PRIVATE_KEY }}
+          owner: jvallery
+          repositories: frigate
+          permission-metadata: read
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Prove the writer is the same restricted installation
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          INVENTORY_INSTALLATION: ${{ steps.inventory-token.outputs.installation-id }}
+          WRITER_INSTALLATION: ${{ steps.app-token.outputs.installation-id }}
+        run: |
+          set -euo pipefail
+          test "${WRITER_INSTALLATION}" = "${INVENTORY_INSTALLATION}"
+          repositories="$(gh api /installation/repositories --paginate \
+            --jq '[.repositories[].full_name] | sort | join(",")')"
+          test "${repositories}" = "jvallery/frigate"
+          if gh api repos/jvallery/sentinel >/dev/null 2>&1; then
+            echo "::error::development writer unexpectedly reaches Sentinel"
+            exit 43
+          fi
+
+      - name: Check out current protected development desired state
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Download verified public release input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: verified-frigate-dev-release-${{ inputs.release_id }}
+          path: ${{ runner.temp }}/verified-release
+
+      - name: Install bounded desired-state validation tools
+        env:
+          KUBECTL_VERSION: v1.33.3
+          KUBECTL_SHA256: 2fcf65c64f352742dc253a25a7c95617c2aba79843d1b74e585c69fe4884afb0
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --quiet pyyaml==6.0.3
+          mkdir -p "${RUNNER_TEMP}/local-dev-tools"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            --output "${RUNNER_TEMP}/local-dev-tools/kubectl"
+          echo "${KUBECTL_SHA256}  ${RUNNER_TEMP}/local-dev-tools/kubectl" | \
+            sha256sum --check
+          chmod 0755 "${RUNNER_TEMP}/local-dev-tools/kubectl"
+          echo "${RUNNER_TEMP}/local-dev-tools" >> "${GITHUB_PATH}"
+
+      - name: Prepare and prove the bounded desired-state change
+        env:
+          BRANCH: automation/frigate-dev-${{ inputs.release_id }}
+        run: |
+          set -euo pipefail
+          git checkout -B "${BRANCH}"
+          python3 .github/scripts/prepare_local_dev_promotion.py \
+            --repo . \
+            --release-manifest "${RUNNER_TEMP}/verified-release/release-manifest.json" \
+            --promotion-run-url "${PROMOTION_RUN_URL}"
+
+          evidence="deploy/kubernetes/local-dev/releases/${RELEASE_ID}"
+          git add -- \
+            deploy/kubernetes/local-dev/deployment.yaml \
+            "${evidence}/desired-state.patch" \
+            "${evidence}/inverse.patch" \
+            "${evidence}/promotion.json" \
+            "${evidence}/release-manifest.json"
+          expected="$(printf '%s\n' \
+            deploy/kubernetes/local-dev/deployment.yaml \
+            "${evidence}/desired-state.patch" \
+            "${evidence}/inverse.patch" \
+            "${evidence}/promotion.json" \
+            "${evidence}/release-manifest.json" | sort)"
+          actual="$(git diff --cached --name-only | sort)"
+          test "${actual}" = "${expected}"
+          git diff --exit-code -- .
+          git diff --cached --check
+
+          python3 .github/scripts/validate_local_dev_runtime.py
+          python3 .github/scripts/test_local_dev_runtime.py
+          command -v kubectl >/dev/null
+          kubectl kustomize deploy/kubernetes/local-dev >/dev/null
+          test -z "$(kubectl kustomize deploy/kubernetes/local-dev | \
+            grep -E 'kind: (Ingress|NetworkPolicy|PersistentVolumeClaim|Secret)' || true)"
+          git diff --cached --check
+
+      - name: Commit and push one idempotent promotion branch
+        id: push
+        env:
+          BRANCH: automation/frigate-dev-${{ inputs.release_id }}
+        run: |
+          set -euo pipefail
+          git config user.name "vallery-frigate-dev-promotion[bot]"
+          git config user.email "vallery-frigate-dev-promotion[bot]@users.noreply.github.com"
+          git commit -m "deploy(frigate-dev): promote ${RELEASE_ID}"
+          head_sha="$(git rev-parse HEAD)"
+          remote_sha="$(git ls-remote --heads origin "refs/heads/${BRANCH}" | awk '{print $1}')"
+          if [[ -n "${remote_sha}" ]]; then
+            git push --force-with-lease="refs/heads/${BRANCH}:${remote_sha}" \
+              origin "HEAD:refs/heads/${BRANCH}"
+          else
+            git push origin "HEAD:refs/heads/${BRANCH}"
+          fi
+          echo "branch=${BRANCH}" >> "${GITHUB_OUTPUT}"
+          echo "head_sha=${head_sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create or update the reviewed development promotion PR
+        env:
+          BRANCH: ${{ steps.push.outputs.branch }}
+          HEAD_SHA: ${{ steps.push.outputs.head_sha }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          body="${RUNNER_TEMP}/promotion-pr.md"
+          {
+            printf '## Proposed change\n\n'
+            printf 'Promote Frigate development to immutable release %s. The generated change is limited to the public development Deployment and its value-blind release receipt, desired-state patch, and exact inverse.\n\n' "${RELEASE_ID}"
+            printf 'Promotion workflow: %s\n\n' "${PROMOTION_RUN_URL}"
+            printf 'Candidate commit: %s\n\n' "${HEAD_SHA}"
+            cat <<'EOF'
+          ## Type of change
+
+          - [x] Code quality improvements to existing code
+
+          ## Additional information
+
+          - This PR fixes or closes issue: fixes #
+          - This PR is related to issue: #27
+          - Link to discussion with maintainers: #27
+
+          ## AI disclosure
+
+          - [x] No AI tools were used in this generated promotion.
+
+          ## Checklist
+
+          - [x] The code change is tested and works locally.
+          - [x] Local tests pass.
+          - [x] There is no commented out code in this PR.
+          - [x] The generated diff and exact inverse are limited to `deploy/kubernetes/local-dev`.
+          EOF
+          } >"${body}"
+
+          existing="$(gh pr list --repo jvallery/frigate --state open \
+            --base vallery/prod --head "${BRANCH}" --json number --jq '.[0].number // empty')"
+          if [[ -n "${existing}" ]]; then
+            gh pr edit "${existing}" --repo jvallery/frigate \
+              --title "deploy(frigate-dev): promote ${RELEASE_ID}" \
+              --body-file "${body}"
+          else
+            gh pr create --repo jvallery/frigate \
+              --base vallery/prod --head "${BRANCH}" \
+              --title "deploy(frigate-dev): promote ${RELEASE_ID}" \
+              --body-file "${body}"
+          fi

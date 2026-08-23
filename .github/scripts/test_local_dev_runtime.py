@@ -289,6 +289,28 @@ class LocalDevPromotionTest(unittest.TestCase):
 
             self.assertFalse((root / "deploy/kubernetes/local-dev/releases").exists())
 
+    def test_checked_in_inverse_targets_valid_adopted_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deployment_path = self.initialize_repo(root)
+            inverse = (
+                ROOT
+                / "deploy/kubernetes/local-dev/releases"
+                / "v0.18.0-vallery.20260823.5/inverse.patch"
+            )
+            subprocess.run(["git", "apply", str(inverse)], cwd=root, check=True)
+            deployment = VALIDATOR.yaml_objects(
+                deployment_path.read_text(encoding="utf-8")
+            )[0]
+
+            VALIDATOR.validate_release_ledger(deployment)
+
+            deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
+                "registry.vallery.net/jvallery/frigate@sha256:" + "0" * 64
+            )
+            with self.assertRaisesRegex(SystemExit, "baseline identity drifted"):
+                VALIDATOR.validate_release_ledger(deployment)
+
     def test_prepare_rejects_cross_repository_controller(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

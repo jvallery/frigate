@@ -1,4 +1,4 @@
-name: Vallery protected image build
+name: Vallery protected artifact build
 
 on:
   workflow_call:
@@ -15,6 +15,10 @@ on:
         description: Immutable Vallery release identifier
         required: true
         type: string
+    secrets:
+      zot_push_registry:
+        description: Exact Zot push registry host available to the trusted builder
+        required: true
     outputs:
       standard_digest:
         value: ${{ jobs.build.outputs.standard_digest }}
@@ -51,7 +55,7 @@ jobs:
       GHCR_REPOSITORY: ghcr.io/jvallery/frigate
       ZOT_PUBLIC_REGISTRY: registry.vallery.net
       ZOT_PUBLIC_REPOSITORY: registry.vallery.net/jvallery/frigate
-      ZOT_PUSH_REGISTRY: ${{ secrets.VALLERY_ZOT_PUSH_REGISTRY }}
+      ZOT_PUSH_REGISTRY: ${{ secrets.zot_push_registry }}
       BUILDKIT_HOST: tcp://127.0.0.1:1234
       BUILDX_METADATA_PROVENANCE: max
       BUILDX_METADATA_WARNINGS: "true"
