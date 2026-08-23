@@ -64,6 +64,25 @@ jobs:
         run: |
           python3 .github/scripts/test_verify_downstream_patch_ledger.py
           python3 .github/scripts/verify_downstream_patch_ledger.py
+      - name: Install pinned kubectl for offline desired-state validation
+        env:
+          KUBECTL_VERSION: v1.33.3
+          KUBECTL_SHA256: 2fcf65c64f352742dc253a25a7c95617c2aba79843d1b74e585c69fe4884afb0
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/local-dev-tools"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            --output "${RUNNER_TEMP}/local-dev-tools/kubectl"
+          echo "${KUBECTL_SHA256}  ${RUNNER_TEMP}/local-dev-tools/kubectl" | \
+            sha256sum --check
+          chmod 0755 "${RUNNER_TEMP}/local-dev-tools/kubectl"
+          echo "${RUNNER_TEMP}/local-dev-tools" >> "${GITHUB_PATH}"
+      - name: Verify isolated public Frigate development desired state
+        run: |
+          python3 -m pip install --disable-pip-version-check --quiet pyyaml==6.0.3
+          python3 .github/scripts/validate_local_dev_runtime.py
+          python3 .github/scripts/test_local_dev_runtime.py
       - name: Verify protected release and artifact contracts
         run: |
           python3 .github/scripts/test_vallery_release_workflows.py

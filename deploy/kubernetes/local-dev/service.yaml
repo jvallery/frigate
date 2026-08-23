@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frigate-dev
+  labels:
+    app.kubernetes.io/name: frigate-dev
+    app.kubernetes.io/part-of: frigate
+    app.kubernetes.io/environment: development
+spec:
+  selector:
+    app.kubernetes.io/name: frigate-dev
+  ports:
+    - name: internal
+      port: 5000
+      targetPort: internal
+      protocol: TCP
+    - name: external
+      port: 8971
+      targetPort: external
+      protocol: TCP

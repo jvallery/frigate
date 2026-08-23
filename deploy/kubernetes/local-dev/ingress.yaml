@@ -1,0 +1,29 @@
+# Staged route. This file is intentionally excluded from the base kustomization
+# until the ownership cutover has pruned the previous development route.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frigate-dev
+  namespace: frigate-dev
+  labels:
+    app.kubernetes.io/name: frigate-dev
+    app.kubernetes.io/part-of: frigate
+    app.kubernetes.io/environment: development
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      network-infra-apps-strip-auth-headers@kubernetescrd,network-infra-ak-forwardauth@kubernetescrd,network-infra-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik-apps
+  rules:
+    - host: cameras-dev.vallery.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frigate-dev
+                port:
+                  number: 8971

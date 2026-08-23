@@ -86,6 +86,11 @@ class CustomCollector:
             "Frames per second being consumed from your camera.",
             labels=["camera_name"],
         )
+        camera_reconnects_last_hour = GaugeMetricFamily(
+            "frigate_camera_reconnects_last_hour",
+            "Camera reconnects observed in the last hour.",
+            labels=["camera_name"],
+        )
         detection_enabled = GaugeMetricFamily(
             "frigate_detection_enabled",
             "Detection enabled for camera",
@@ -119,6 +124,12 @@ class CustomCollector:
             self.add_metric(audio_dBFS, [camera_name], camera_stats, "audio_dBFS")
             self.add_metric(audio_rms, [camera_name], camera_stats, "audio_rms")
             self.add_metric(camera_fps, [camera_name], camera_stats, "camera_fps")
+            self.add_metric(
+                camera_reconnects_last_hour,
+                [camera_name],
+                camera_stats,
+                "reconnects_last_hour",
+            )
             self.add_metric(
                 detection_enabled, [camera_name], camera_stats, "detection_enabled"
             )
@@ -191,6 +202,7 @@ class CustomCollector:
         yield audio_dBFS
         yield audio_rms
         yield camera_fps
+        yield camera_reconnects_last_hour
         yield detection_enabled
         yield detection_fps
         yield process_fps
