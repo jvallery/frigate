@@ -139,6 +139,15 @@ If no secret is found on startup, Frigate generates one and stores it in a `.jwt
 
 Changing the secret will invalidate current tokens.
 
+## Metrics bearer credential
+
+Prometheus can use a dedicated, revocable bearer credential on authenticated
+port `8971` when native authentication is enabled, without creating a Frigate
+user or receiving a session cookie. The credential authorizes only the exact
+`GET /api/metrics` request. See
+[Metrics](/configuration/metrics#dedicated-bearer-credential) for the file
+format, scrape configuration, rotation, and revocation contract.
+
 ## Proxy configuration
 
 Frigate can be configured to leverage features of common upstream authentication proxies such as Authelia, Authentik, oauth2_proxy, or traefik-forward-auth. Frigate does not implement OIDC, SAML, or LDAP natively; as an NVR focused on recording and object detection, it relies on robust, battle-tested proxies to handle those protocols and passes the authenticated user and role through via headers (see below).
