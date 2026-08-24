@@ -6,8 +6,8 @@ development environment. The protected `vallery/prod` branch is reconciled from
 deployment mechanism.
 
 `kubectl kustomize deploy/kubernetes/local-dev` intentionally renders exactly
-one ConfigMap, Deployment, Service, and ServiceAccount. It does not render a
-Namespace, Secret, PVC, RBAC object, NetworkPolicy, or Ingress.
+one ConfigMap, Deployment, Service, ServiceAccount, and Ingress. It does not
+render a Namespace, Secret, PVC, RBAC object, or NetworkPolicy.
 
 ## Private platform contract
 
@@ -47,12 +47,12 @@ Traefik allowances. It also allows only Prometheus Pods labeled
 port `5000`. Camera address ranges cannot be expressed safely in this public
 repository, so this tree does not render a NetworkPolicy.
 
-Service `frigate-dev` exposes TCP port `8971` as `external`. `ingress.yaml` is a
-tested but staged artifact and is deliberately absent from `kustomization.yaml`.
-During the ownership cutover, the previous route must first be pruned through
-its owning Argo Application. Only then may a Frigate PR add `ingress.yaml` to
-the base resources. There must never be two active routers for the development
-hostname.
+Service `frigate-dev` exposes TCP port `8971` as `external`. `ingress.yaml` is
+the sole route for `cameras-dev.vallery.net` and uses the private platform's
+fixed Traefik and Authentik middleware chain. It entered the base only after
+the previous route and Sentinel Application were absent through their normal
+Argo ownership paths. There must never be two active routers for the
+development hostname.
 
 Prometheus scrapes `/api/metrics` through the Service's named `internal` port,
 TCP `5000`. Kube-state-metrics can join that scrape to the Deployment and Pod

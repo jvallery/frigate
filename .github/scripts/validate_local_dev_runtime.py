@@ -14,7 +14,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "deploy/kubernetes/local-dev"
 KUSTOMIZATION = BASE / "kustomization.yaml"
-STAGED_INGRESS = BASE / "ingress.yaml"
+INGRESS = BASE / "ingress.yaml"
 
 IMAGE_RE = re.compile(r"^[a-z0-9./:-]+@sha256:[0-9a-f]{64}$")
 IPV4_RE = re.compile(
@@ -412,14 +412,11 @@ def validate_service(document: dict[str, Any]) -> None:
     )
 
 
-def validate_staged_ingress() -> None:
-    """Validate the single route artifact while proving it is not rendered."""
+def validate_ingress(ingress: dict[str, Any]) -> None:
+    """Validate the single rendered development route."""
 
-    require(STAGED_INGRESS.is_file(), "staged Ingress artifact is missing")
-    documents = yaml_objects(STAGED_INGRESS.read_text(encoding="utf-8"))
-    require(len(documents) == 1, "staged route contains extra objects")
-    ingress = documents[0]
-    require(ingress.get("kind") == "Ingress", "staged route is not an Ingress")
+    require(INGRESS.is_file(), "Ingress artifact is missing")
+    require(ingress.get("kind") == "Ingress", "route is not an Ingress")
     validate_common(ingress, "frigate-dev")
     metadata = ingress["metadata"]
     require(
@@ -427,15 +424,15 @@ def validate_staged_ingress() -> None:
             "traefik.ingress.kubernetes.io/router.middlewares"
         )
         == EXPECTED_MIDDLEWARES,
-        "staged middleware chain drifted",
+        "Ingress middleware chain drifted",
     )
     spec = ingress.get("spec") or {}
     require(spec.get("ingressClassName") == "traefik-apps", "Ingress class drifted")
     rules = spec.get("rules") or []
-    require(len(rules) == 1, "staged route must have one host")
+    require(len(rules) == 1, "Ingress must have one host")
     require(rules[0].get("host") == "cameras-dev.vallery.net", "dev host drifted")
     paths = rules[0].get("http", {}).get("paths") or []
-    require(len(paths) == 1, "staged route must have one path")
+    require(len(paths) == 1, "Ingress must have one path")
     backend = paths[0].get("backend", {}).get("service") or {}
     require(backend.get("name") == "frigate-dev", "Ingress backend drifted")
     require(backend.get("port", {}).get("number") == 8971, "Ingress port drifted")
@@ -533,18 +530,18 @@ def validate_documents(documents: list[dict[str, Any]]) -> None:
         (str(document.get("kind")), str(document.get("metadata", {}).get("name")))
         for document in documents
     )
-    require(len(identities) == 4, "base must render exactly four objects")
+    require(len(identities) == 5, "base must render exactly five objects")
     require(
         [(kind, name) for kind, name in identities if kind != "ConfigMap"]
         == [
             ("Deployment", "frigate-dev"),
+            ("Ingress", "frigate-dev"),
             ("Service", "frigate-dev"),
             ("ServiceAccount", "frigate-dev"),
         ],
         "base rendered an unexpected object",
     )
     forbidden_kinds = {
-        "Ingress",
         "Namespace",
         "NetworkPolicy",
         "PersistentVolumeClaim",
@@ -554,12 +551,13 @@ def validate_documents(documents: list[dict[str, Any]]) -> None:
     }
     require(
         not any(document.get("kind") in forbidden_kinds for document in documents),
-        "base rendered a platform-owned or staged object",
+        "base rendered a platform-owned object",
     )
     validate_config(object_by_kind(documents, "ConfigMap"))
     validate_service_account(object_by_kind(documents, "ServiceAccount"))
     validate_deployment(object_by_kind(documents, "Deployment"))
     validate_service(object_by_kind(documents, "Service"))
+    validate_ingress(object_by_kind(documents, "Ingress"))
 
 
 def validate() -> str:
@@ -569,7 +567,6 @@ def validate() -> str:
     rendered, documents = render()
     validate_documents(documents)
     validate_release_ledger(object_by_kind(documents, "Deployment"))
-    validate_staged_ingress()
     return rendered
 
 

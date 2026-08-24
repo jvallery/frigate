@@ -1,5 +1,5 @@
-# Staged route. This file is intentionally excluded from the base kustomization
-# until the ownership cutover has pruned the previous development route.
+# Frigate-owned development route, enabled only after the previous Sentinel
+# Application and route were pruned through their Argo ownership path.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

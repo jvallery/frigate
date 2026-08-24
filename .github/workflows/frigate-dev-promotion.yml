@@ -291,7 +291,7 @@ jobs:
           command -v kubectl >/dev/null
           kubectl kustomize deploy/kubernetes/local-dev >/dev/null
           test -z "$(kubectl kustomize deploy/kubernetes/local-dev | \
-            grep -E 'kind: (Ingress|NetworkPolicy|PersistentVolumeClaim|Secret)' || true)"
+            grep -E 'kind: (NetworkPolicy|PersistentVolumeClaim|Secret)' || true)"
           git diff --cached --check
 
       - name: Commit and push one idempotent promotion branch
