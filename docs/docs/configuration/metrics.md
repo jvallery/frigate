@@ -73,7 +73,8 @@ These gauges report the operating system's figures for the whole filesystem (the
 
 ## Configuring Prometheus
 
-To scrape metrics from Frigate, add the following to your Prometheus configuration:
+Prometheus can scrape the internal unauthenticated port when it is restricted to
+a trusted network:
 
 ```yaml
 scrape_configs:
@@ -83,6 +84,47 @@ scrape_configs:
       - targets: ["frigate:5000"]
     scrape_interval: 15s
 ```
+
+### Dedicated bearer credential
+
+When Prometheus must use the authenticated port `8971` and native authentication
+is enabled, Frigate supports an optional metrics-only bearer credential. Mount
+a read-only credentials file at
+`/run/secrets/FRIGATE_METRICS_TOKENS`. The file must contain one or two unique,
+unpadded base64url tokens, one per line. Each token must be between 43 and 128
+characters, and the file may end with one newline.
+
+Generate a 32-byte token with Python:
+
+```shell
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+Configure Prometheus to read the same token from its own read-only credentials
+file and send it as a bearer token:
+
+```yaml
+scrape_configs:
+  - job_name: "frigate"
+    metrics_path: "/api/metrics"
+    authorization:
+      type: "Bearer"
+      credentials_file: "/etc/prometheus/secrets/frigate/token"
+    static_configs:
+      - targets: ["frigate:8971"]
+    scrape_interval: 15s
+```
+
+This credential authorizes only the exact `GET /api/metrics` request. It does
+not create a Frigate user, grant access to other API routes, or issue a cookie.
+Missing, invalid, or nonmatching credential files are rejected. Native JWT and
+internal-port authentication are not changed.
+
+Frigate reads the file for every opaque bearer authentication attempt. To rotate
+without a restart, write the old and new tokens on separate lines, update all
+scrapers to the new token, and then remove the old token. Removing the file
+revokes every metrics bearer credential. Keep both projected files private and
+read-only.
 
 ## Example Queries
 

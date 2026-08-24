@@ -43,6 +43,11 @@ logger = logging.getLogger(__name__)
 FIRST_LOAD_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 _first_load_seen: dict[str, float] = {}
 
+METRICS_TOKEN_FILE = Path("/run/secrets/FRIGATE_METRICS_TOKENS")
+METRICS_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{43,128}")
+# Two maximum-length tokens, their separator, and one optional final LF.
+METRICS_TOKEN_FILE_MAX_BYTES = 258
+
 
 def require_admin_by_default():
     """
@@ -308,6 +313,73 @@ def _cleanup_first_load_seen() -> None:
     expired = [k for k, exp in _first_load_seen.items() if exp <= now]
     for k in expired:
         del _first_load_seen[k]
+
+
+def _read_metrics_tokens() -> tuple[str, ...]:
+    """Read and strictly validate the optional metrics bearer token file."""
+    try:
+        with METRICS_TOKEN_FILE.open("rb") as token_file:
+            contents = token_file.read(METRICS_TOKEN_FILE_MAX_BYTES + 1)
+    except OSError:
+        return ()
+
+    if not contents or len(contents) > METRICS_TOKEN_FILE_MAX_BYTES:
+        return ()
+
+    if contents.endswith(b"\n"):
+        contents = contents[:-1]
+
+    try:
+        candidates = contents.decode("ascii").split("\n")
+    except UnicodeDecodeError:
+        return ()
+
+    if not 1 <= len(candidates) <= 2:
+        return ()
+
+    if any(
+        METRICS_TOKEN_PATTERN.fullmatch(candidate) is None for candidate in candidates
+    ):
+        return ()
+
+    if len(set(candidates)) != len(candidates):
+        return ()
+
+    return tuple(candidates)
+
+
+def _is_exact_metrics_request(request: Request) -> bool:
+    """Return whether nginx identified the original request as GET metrics."""
+    if request.headers.get("x-original-method") != "GET":
+        return False
+
+    original_url = request.headers.get("x-original-url")
+    if original_url is None or "?" in original_url or "#" in original_url:
+        return False
+
+    try:
+        parsed_url = urlparse(original_url)
+    except ValueError:
+        return False
+
+    return (
+        parsed_url.scheme in {"http", "https"}
+        and bool(parsed_url.netloc)
+        and parsed_url.path == "/api/metrics"
+        and not parsed_url.params
+    )
+
+
+def _matches_metrics_token(encoded_token: str) -> bool:
+    """Compare an opaque bearer against every configured metrics token."""
+    if METRICS_TOKEN_PATTERN.fullmatch(encoded_token) is None:
+        return False
+
+    comparisons = [
+        secrets.compare_digest(encoded_token, candidate)
+        for candidate in _read_metrics_tokens()
+    ]
+    return any(comparisons)
 
 
 def get_jwt_secret() -> str:
@@ -649,6 +721,22 @@ def auth(request: Request):
     original_url = request.headers.get("x-original-url")
     frigate_config = request.app.frigate_config
 
+    authorization = request.headers.get("authorization", "")
+    if auth_config.enabled and authorization.startswith("Bearer "):
+        bearer_token = authorization.removeprefix("Bearer ")
+
+        # Native JWTs use the compact JWS form and always contain periods.
+        # Opaque bearer credentials are reserved for the exact metrics request.
+        if "." not in bearer_token:
+            if _matches_metrics_token(bearer_token) and _is_exact_metrics_request(
+                request
+            ):
+                success_response.headers["remote-user"] = "metrics"
+                success_response.headers["remote-role"] = "metrics"
+                return success_response
+
+            return fail_response
+
     # if auth is disabled, just apply the proxy header map and return success
     if not auth_config.enabled:
         # pass the user header value from the upstream proxy if a mapping is specified
@@ -686,12 +774,10 @@ def auth(request: Request):
 
     jwt_source = None
     encoded_token = None
-    if "authorization" in request.headers and request.headers[
-        "authorization"
-    ].startswith("Bearer "):
+    if authorization.startswith("Bearer "):
         jwt_source = "authorization"
         logger.debug("Found authorization header")
-        encoded_token = request.headers["authorization"].replace("Bearer ", "")
+        encoded_token = authorization.removeprefix("Bearer ")
     elif JWT_COOKIE_NAME in request.cookies:
         jwt_source = "cookie"
         logger.debug("Found jwt cookie")
