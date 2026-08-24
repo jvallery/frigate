@@ -106,14 +106,25 @@ file and send it as a bearer token:
 ```yaml
 scrape_configs:
   - job_name: "frigate"
+    scheme: "https"
     metrics_path: "/api/metrics"
     authorization:
       type: "Bearer"
       credentials_file: "/etc/prometheus/secrets/frigate/token"
+    tls_config:
+      ca_file: "/etc/prometheus/certs/frigate-ca.pem"
+      server_name: "frigate.example"
     static_configs:
       - targets: ["frigate:8971"]
     scrape_interval: 15s
 ```
+
+Port `8971` uses HTTPS by default. Mount the certificate authority that signed
+the Frigate certificate into Prometheus, and set `server_name` to a name covered
+by that certificate. The default generated self-signed certificate is not a
+durable trust anchor for an unattended credential-bearing scrape. If TLS is
+explicitly disabled because another trusted, isolated network layer provides
+the transport boundary, set `scheme: "http"` and remove `tls_config`.
 
 This credential authorizes only the exact `GET /api/metrics` request. It does
 not create a Frigate user, grant access to other API routes, or issue a cookie.
