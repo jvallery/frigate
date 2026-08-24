@@ -438,7 +438,9 @@ def validate_ingress(ingress: dict[str, Any]) -> None:
     require(backend.get("port", {}).get("number") == 8971, "Ingress port drifted")
 
 
-def validate_release_ledger(deployment: dict[str, Any]) -> None:
+def validate_release_ledger(
+    deployment: dict[str, Any], repo_root: Path = ROOT
+) -> None:
     """Prove the current public release receipt and exact image inverse."""
 
     metadata = deployment.get("metadata") or {}
@@ -461,7 +463,11 @@ def validate_release_ledger(deployment: dict[str, Any]) -> None:
         )
         return
 
-    evidence = BASE / "releases" / release_id
+    evidence = (
+        repo_root
+        / "deploy/kubernetes/local-dev/releases"
+        / release_id
+    )
     require(evidence.is_dir(), "current release ledger entry is missing")
     require(
         {path.name for path in evidence.iterdir() if path.is_file()}
@@ -519,7 +525,9 @@ def validate_release_ledger(deployment: dict[str, Any]) -> None:
         if reverse:
             command.append("--reverse")
         command.extend(["--check", str(patch)])
-        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+        result = subprocess.run(
+            command, cwd=repo_root, capture_output=True, text=True
+        )
         require(result.returncode == 0, f"{name} does not apply at the current release")
 
 
