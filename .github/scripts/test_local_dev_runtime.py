@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -33,9 +34,15 @@ RELEASE_ID = "v0.18.0-vallery.20260824.1"
 STANDARD_DIGEST = "sha256:" + "a" * 64
 TENSORRT_DIGEST = "sha256:" + "b" * 64
 PROMOTION_RUN = "https://github.com/jvallery/frigate/actions/runs/123456"
+SOURCE_SHA = "1" * 39 + "a"
 
 
-def release_manifest() -> dict:
+def release_manifest(
+    *,
+    release_id: str = RELEASE_ID,
+    standard_digest: str = STANDARD_DIGEST,
+    source_sha: str = SOURCE_SHA,
+) -> dict:
     """Return one minimal, public release manifest accepted by the helper."""
 
     def artifact(digest: str) -> dict:
@@ -53,18 +60,18 @@ def release_manifest() -> dict:
 
     return {
         "schema": "vallery.frigate.release/1",
-        "release_id": RELEASE_ID,
+        "release_id": release_id,
         "source": {
             "fork_repository": "jvallery/frigate",
             "fork_branch": "vallery/prod",
-            "fork_sha": "1" * 40,
+            "fork_sha": source_sha,
             "upstream_sha": "2" * 40,
         },
         "build": {
             "workflow_run": "https://github.com/jvallery/frigate/actions/runs/654321"
         },
         "artifacts": {
-            "standard-amd64": artifact(STANDARD_DIGEST),
+            "standard-amd64": artifact(standard_digest),
             "tensorrt-amd64": artifact(TENSORRT_DIGEST),
         },
     }
@@ -189,6 +196,10 @@ class LocalDevPromotionTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        shutil.copytree(
+            ROOT / "deploy/kubernetes/local-dev/releases",
+            root / "deploy/kubernetes/local-dev/releases",
+        )
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.invalid"],
@@ -229,7 +240,7 @@ class LocalDevPromotionTest(unittest.TestCase):
             self.assertEqual(
                 2, updated.count(f"app.kubernetes.io/version: {RELEASE_ID}")
             )
-            self.assertEqual(2, updated.count(f"vallery.net/source-sha: {'1' * 40}"))
+            self.assertEqual(2, updated.count(f"vallery.net/source-sha: {SOURCE_SHA}"))
             self.assertNotIn(TENSORRT_DIGEST, updated)
             self.assertEqual(
                 {
@@ -304,29 +315,84 @@ class LocalDevPromotionTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "must be clean"):
                 PROMOTION.prepare(root, manifest_path, PROMOTION_RUN)
 
-            self.assertFalse((root / "deploy/kubernetes/local-dev/releases").exists())
+            self.assertFalse(
+                (
+                    root
+                    / "deploy/kubernetes/local-dev/releases"
+                    / RELEASE_ID
+                ).exists()
+            )
 
-    def test_checked_in_inverse_targets_valid_adopted_baseline(self) -> None:
+    def test_active_inverse_targets_its_valid_previous_release(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             deployment_path = self.initialize_repo(root)
+            release_id, _, _ = PROMOTION.current_anchors(root)
             inverse = (
-                ROOT
+                root
                 / "deploy/kubernetes/local-dev/releases"
-                / "v0.18.0-vallery.20260823.5/inverse.patch"
+                / release_id
+                / "inverse.patch"
             )
             subprocess.run(["git", "apply", str(inverse)], cwd=root, check=True)
             deployment = VALIDATOR.yaml_objects(
                 deployment_path.read_text(encoding="utf-8")
             )[0]
 
-            VALIDATOR.validate_release_ledger(deployment)
+            VALIDATOR.validate_release_ledger(deployment, root)
 
             deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
                 "registry.vallery.net/jvallery/frigate@sha256:" + "0" * 64
             )
-            with self.assertRaisesRegex(SystemExit, "baseline identity drifted"):
-                VALIDATOR.validate_release_ledger(deployment)
+            with self.assertRaisesRegex(
+                SystemExit, "baseline identity drifted|standard digest disagrees"
+            ):
+                VALIDATOR.validate_release_ledger(deployment, root)
+
+    def test_successive_promotions_validate_only_the_active_inverse(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deployment_path = self.initialize_repo(root)
+
+            first = PROMOTION.prepare(
+                root,
+                self.write_manifest(root),
+                PROMOTION_RUN,
+            )
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "first promotion"], cwd=root, check=True
+            )
+
+            second_release = "v0.18.0-vallery.20260824.2"
+            second_digest = "sha256:" + "c" * 64
+            second = PROMOTION.prepare(
+                root,
+                self.write_manifest(
+                    root,
+                    release_manifest(
+                        release_id=second_release,
+                        standard_digest=second_digest,
+                        source_sha="3" * 39 + "b",
+                    ),
+                ),
+                "https://github.com/jvallery/frigate/actions/runs/234567",
+            )
+            deployment = VALIDATOR.yaml_objects(
+                deployment_path.read_text(encoding="utf-8")
+            )[0]
+            VALIDATOR.validate_release_ledger(deployment, root)
+
+            subprocess.run(
+                ["git", "apply", str(second / "inverse.patch")],
+                cwd=root,
+                check=True,
+            )
+            previous = VALIDATOR.yaml_objects(
+                deployment_path.read_text(encoding="utf-8")
+            )[0]
+            VALIDATOR.validate_release_ledger(previous, root)
+            self.assertEqual(first.name, RELEASE_ID)
 
     def test_prepare_rejects_cross_repository_controller(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
