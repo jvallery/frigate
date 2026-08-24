@@ -35,6 +35,6 @@ diff --git a/deploy/kubernetes/local-dev/deployment.yaml b/deploy/kubernetes/loc
          - name: frigate
 -          image: registry.vallery.net/jvallery/frigate@sha256:a1a3f99d71bc16ec43693bc8daba94b3e3bfccb146b5771a09ff9704c6cbe9d4
 +          image: registry.vallery.net/jvallery/frigate@sha256:7b16158c7da16207d23cedd2f5b3758390a9908495efe9ffa970c5e5e0a3a9a0
-           imagePullPolicy: IfNotPresent
+           imagePullPolicy: Always
            env:
              - name: FRIGATE_CAMERA_HOST

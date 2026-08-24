@@ -31,8 +31,11 @@ release receipts, CI output, or issue evidence.
 
 ServiceAccount `frigate-dev` has no RBAC and disables token automount at both
 the account and Pod levels. The Pod is CPU-only, uses the standard image by
-immutable digest, and mounts only bounded `emptyDir` volumes. Configuration,
-database, and media disappear with the Pod lifecycle.
+immutable digest, and sets the Frigate container's image pull policy to
+`Always`. Every Pod replacement therefore authenticates through the dedicated
+read-only pull Secret even when the digest is unchanged. The Pod mounts only
+bounded `emptyDir` volumes, so configuration, database, media, and generated
+bootstrap state disappear with the Pod lifecycle.
 
 ## Private network and route contract
 

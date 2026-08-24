@@ -78,7 +78,7 @@ spec:
       containers:
         - name: frigate
           image: registry.vallery.net/jvallery/frigate@sha256:7b16158c7da16207d23cedd2f5b3758390a9908495efe9ffa970c5e5e0a3a9a0
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             - name: FRIGATE_CAMERA_HOST
               valueFrom:
