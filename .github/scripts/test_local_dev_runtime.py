@@ -149,6 +149,12 @@ class LocalDevRuntimeContractTest(unittest.TestCase):
         )
         self.assert_deployment_rejected(deployment, "only application container")
 
+    def test_guard_rejects_cached_frigate_image_pull_policy(self) -> None:
+        deployment = self.deployment()
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        container["imagePullPolicy"] = "IfNotPresent"
+        self.assert_deployment_rejected(deployment, "must always reauthenticate")
+
     def test_guard_rejects_secret_or_route_in_base(self) -> None:
         secret = {
             "apiVersion": "v1",
@@ -208,6 +214,7 @@ class LocalDevPromotionTest(unittest.TestCase):
             candidate = f"registry.vallery.net/jvallery/frigate@{STANDARD_DIGEST}"
             updated = deployment.read_text(encoding="utf-8")
             self.assertIn(candidate, updated)
+            self.assertIn("imagePullPolicy: Always", updated)
             self.assertIn(f"vallery.net/release-id: {RELEASE_ID}", updated)
             self.assertEqual(
                 2, updated.count(f"app.kubernetes.io/version: {RELEASE_ID}")

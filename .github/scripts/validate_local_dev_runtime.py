@@ -300,6 +300,10 @@ def validate_deployment(document: dict[str, Any]) -> None:
         ),
         "Frigate image repository drifted",
     )
+    require(
+        frigate.get("imagePullPolicy") == "Always",
+        "Frigate image pull policy must always reauthenticate",
+    )
     env = frigate.get("env") or []
     require(
         {entry.get("name") for entry in env} == {*EXPECTED_SECRET_KEYS, "TZ"},
