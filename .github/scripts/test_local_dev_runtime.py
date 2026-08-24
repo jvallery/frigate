@@ -100,7 +100,8 @@ class LocalDevRuntimeContractTest(unittest.TestCase):
 
     def test_checked_in_public_runtime_contract_passes(self) -> None:
         rendered = VALIDATOR.validate()
-        self.assertNotIn("kind: Ingress", rendered)
+        self.assertIn("kind: Ingress", rendered)
+        self.assertIn("host: cameras-dev.vallery.net", rendered)
         self.assertNotIn("kind: Secret", rendered)
         self.assertNotIn("kind: PersistentVolumeClaim", rendered)
 
@@ -155,14 +156,23 @@ class LocalDevRuntimeContractTest(unittest.TestCase):
         container["imagePullPolicy"] = "IfNotPresent"
         self.assert_deployment_rejected(deployment, "must always reauthenticate")
 
-    def test_guard_rejects_secret_or_route_in_base(self) -> None:
+    def test_guard_rejects_extra_secret_in_base(self) -> None:
         secret = {
             "apiVersion": "v1",
             "kind": "Secret",
             "metadata": {"name": "forbidden", "namespace": "frigate-dev"},
         }
-        with self.assertRaisesRegex(SystemExit, "exactly four objects"):
+        with self.assertRaisesRegex(SystemExit, "exactly five objects"):
             VALIDATOR.validate_documents([*copy.deepcopy(self.documents), secret])
+
+    def test_guard_rejects_route_backend_drift(self) -> None:
+        documents = copy.deepcopy(self.documents)
+        ingress = VALIDATOR.object_by_kind(documents, "Ingress")
+        ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"][
+            "name"
+        ] = "foreign"
+        with self.assertRaisesRegex(SystemExit, "Ingress backend drifted"):
+            VALIDATOR.validate_documents(documents)
 
 
 class LocalDevPromotionTest(unittest.TestCase):
