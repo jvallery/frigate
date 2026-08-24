@@ -17,6 +17,8 @@ from frigate.api.auth import create_encoded_jwt
 TOKEN_A = "A" * 43
 TOKEN_B = "B" * 43
 WRONG_TOKEN = "C" * 43
+MAX_TOKEN = "D" * 128
+TOO_LONG_TOKEN = "E" * 129
 
 
 class TestHttpMetricsAuth(unittest.TestCase):
@@ -112,6 +114,13 @@ class TestHttpMetricsAuth(unittest.TestCase):
         self.token_file.write_text(TOKEN_B)
         self.assertEqual(self._authenticate(TOKEN_A).status_code, 401)
         self.assertEqual(self._authenticate(TOKEN_B).status_code, 202)
+
+    def test_maximum_token_length_succeeds_and_129_characters_are_rejected(self):
+        self.token_file.write_text(MAX_TOKEN)
+        self.assertEqual(self._authenticate(MAX_TOKEN).status_code, 202)
+
+        self.token_file.write_text(TOO_LONG_TOKEN)
+        self.assertEqual(self._authenticate(TOO_LONG_TOKEN).status_code, 401)
 
     def test_missing_unreadable_wrong_and_malformed_credentials_fail_closed(self):
         self.assertEqual(self._authenticate(TOKEN_A).status_code, 401)
