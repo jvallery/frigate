@@ -1,0 +1,83 @@
+{
+  "artifacts": {
+    "standard-amd64": {
+      "buildkit_provenance": "standard.provenance.json",
+      "digest": "sha256:b05683eb98bf27cca2955eb2db6de34d2408b99b962752ff9e6636d09577d36a",
+      "ghcr": {
+        "canonical": "ghcr.io/jvallery/frigate@sha256:b05683eb98bf27cca2955eb2db6de34d2408b99b962752ff9e6636d09577d36a",
+        "tag": "ghcr.io/jvallery/frigate:v0.18.0-vallery.20260824.7-standard",
+        "verified_digest": "sha256:b05683eb98bf27cca2955eb2db6de34d2408b99b962752ff9e6636d09577d36a"
+      },
+      "sbom": "standard.sbom.spdx.json",
+      "zot": {
+        "canonical": "registry.vallery.net/jvallery/frigate@sha256:b05683eb98bf27cca2955eb2db6de34d2408b99b962752ff9e6636d09577d36a",
+        "tag": "registry.vallery.net/jvallery/frigate:v0.18.0-vallery.20260824.7-standard",
+        "verified_digest": "sha256:b05683eb98bf27cca2955eb2db6de34d2408b99b962752ff9e6636d09577d36a"
+      }
+    },
+    "tensorrt-amd64": {
+      "buildkit_provenance": "tensorrt.provenance.json",
+      "digest": "sha256:4ecc2e1334347a6ae78b73803e8bd63757814e3a522dbf247272da9647e81c98",
+      "ghcr": {
+        "canonical": "ghcr.io/jvallery/frigate@sha256:4ecc2e1334347a6ae78b73803e8bd63757814e3a522dbf247272da9647e81c98",
+        "tag": "ghcr.io/jvallery/frigate:v0.18.0-vallery.20260824.7-tensorrt",
+        "verified_digest": "sha256:4ecc2e1334347a6ae78b73803e8bd63757814e3a522dbf247272da9647e81c98"
+      },
+      "sbom": "tensorrt.sbom.spdx.json",
+      "zot": {
+        "canonical": "registry.vallery.net/jvallery/frigate@sha256:4ecc2e1334347a6ae78b73803e8bd63757814e3a522dbf247272da9647e81c98",
+        "tag": "registry.vallery.net/jvallery/frigate:v0.18.0-vallery.20260824.7-tensorrt",
+        "verified_digest": "sha256:4ecc2e1334347a6ae78b73803e8bd63757814e3a522dbf247272da9647e81c98"
+      }
+    }
+  },
+  "build": {
+    "buildkit": "v0.31.2-rootless",
+    "buildx": "v0.36.1",
+    "cache_namespace": "jvallery/frigate/arc/cache",
+    "docker_cli": "29.7.2",
+    "platform": "linux/amd64",
+    "runner_profile": "build-trusted",
+    "source_date_epoch": 1787544432,
+    "workflow_run": "https://github.com/jvallery/frigate/actions/runs/32688869559"
+  },
+  "created_at": "2026-08-24T04:16:44Z",
+  "migrations": [
+    {
+      "migration_class": "additive_schema_indexes",
+      "name": "036_add_query_indexes",
+      "path": "migrations/036_add_query_indexes.py",
+      "rollback_class": "image_rollback_safe_indexes_remain"
+    },
+    {
+      "migration_class": "history_compatibility_noop",
+      "name": "900_performance_indexes",
+      "path": "migrations/900_performance_indexes.py",
+      "rollback_class": "required_for_existing_history_image_rollback_safe"
+    }
+  ],
+  "patch_ledger": {
+    "path": ".vallery/downstream-patches.json",
+    "sha256": "sha256:3d77d1c4c277bed3565abada5f6a5893eb27dfe8779e61c268ecdcbaa650169c"
+  },
+  "promotion": {
+    "cluster_mutated_by_build": false,
+    "release_class": "additive-schema",
+    "required_soaks": [
+      "immediate",
+      "15m",
+      "24h"
+    ],
+    "rollback_class": "image-rollback-safe-indexes-remain"
+  },
+  "release_id": "v0.18.0-vallery.20260824.7",
+  "schema": "vallery.frigate.release/1",
+  "source": {
+    "fork_branch": "vallery/prod",
+    "fork_repository": "jvallery/frigate",
+    "fork_sha": "4c9d625f00bd6b71e308d768a7b0427bc34770a2",
+    "upstream_branch": "dev",
+    "upstream_repository": "blakeblackshear/frigate",
+    "upstream_sha": "ad79e666eb666d0c858cb95071f6af75f3f29866"
+  }
+}

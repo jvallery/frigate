@@ -1,0 +1,13 @@
+{
+  "deployment_state": "pending-protected-merge",
+  "environment": "frigate-dev",
+  "image": "registry.vallery.net/jvallery/frigate@sha256:b05683eb98bf27cca2955eb2db6de34d2408b99b962752ff9e6636d09577d36a",
+  "previous_image": "registry.vallery.net/jvallery/frigate@sha256:cb5ba8aa48f3ce9a92f3e08b17a9984a57a835d7619e64d39f47bea4953681dd",
+  "previous_release_id": "v0.18.0-vallery.20260823.6",
+  "previous_source_sha": "dd92e57cc9b5a4ae055cf735d91eb43ea9a43fc3",
+  "promotion_run": "https://github.com/jvallery/frigate/actions/runs/32876992819",
+  "release_id": "v0.18.0-vallery.20260824.7",
+  "schema": "vallery.frigate.dev-promotion/1",
+  "source_sha": "4c9d625f00bd6b71e308d768a7b0427bc34770a2",
+  "upstream_sha": "ad79e666eb666d0c858cb95071f6af75f3f29866"
+}
