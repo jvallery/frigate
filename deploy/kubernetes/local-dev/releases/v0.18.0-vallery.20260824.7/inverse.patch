@@ -1,0 +1,41 @@
+diff --git b/deploy/kubernetes/local-dev/deployment.yaml a/deploy/kubernetes/local-dev/deployment.yaml
+index 70e362af2..ea9e3b808 100644
+--- b/deploy/kubernetes/local-dev/deployment.yaml
++++ a/deploy/kubernetes/local-dev/deployment.yaml
+@@ -6,13 +6,13 @@ metadata:
+     app.kubernetes.io/name: frigate-dev
+     app.kubernetes.io/part-of: frigate
+     app.kubernetes.io/environment: development
+-    app.kubernetes.io/version: v0.18.0-vallery.20260824.7
+-    vallery.net/source-sha: 4c9d625f00bd6b71e308d768a7b0427bc34770a2
++    app.kubernetes.io/version: v0.18.0-vallery.20260823.6
++    vallery.net/source-sha: dd92e57cc9b5a4ae055cf735d91eb43ea9a43fc3
+     vallery.net/image-variant: standard-amd64
+     vallery.net/detector-device: cpu
+     vallery.net/semantic-device: cpu
+   annotations:
+-    vallery.net/release-id: v0.18.0-vallery.20260824.7
++    vallery.net/release-id: v0.18.0-vallery.20260823.6
+     vallery.net/image-variant: standard-amd64
+ spec:
+   replicas: 1
+@@ -28,8 +28,8 @@ spec:
+         app.kubernetes.io/name: frigate-dev
+         app.kubernetes.io/part-of: frigate
+         app.kubernetes.io/environment: development
+-        app.kubernetes.io/version: v0.18.0-vallery.20260824.7
+-        vallery.net/source-sha: 4c9d625f00bd6b71e308d768a7b0427bc34770a2
++        app.kubernetes.io/version: v0.18.0-vallery.20260823.6
++        vallery.net/source-sha: dd92e57cc9b5a4ae055cf735d91eb43ea9a43fc3
+         vallery.net/image-variant: standard-amd64
+         vallery.net/detector-device: cpu
+         vallery.net/semantic-device: cpu
+@@ -77,7 +77,7 @@ spec:
+               readOnly: true
+       containers:
+         - name: frigate
+-          image: registry.vallery.net/jvallery/frigate@sha256:b05683eb98bf27cca2955eb2db6de34d2408b99b962752ff9e6636d09577d36a
++          image: registry.vallery.net/jvallery/frigate@sha256:cb5ba8aa48f3ce9a92f3e08b17a9984a57a835d7619e64d39f47bea4953681dd
+           imagePullPolicy: Always
+           env:
+             - name: FRIGATE_CAMERA_HOST
