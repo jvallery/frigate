@@ -83,6 +83,8 @@ jobs:
           python3 -m pip install --disable-pip-version-check --quiet pyyaml==6.0.3
           python3 .github/scripts/validate_local_dev_runtime.py
           python3 .github/scripts/test_local_dev_runtime.py
+          python3 -m unittest discover -s deploy/kubernetes/ore-maintenance -p 'test_*.py'
+          kubectl kustomize deploy/kubernetes/ore-maintenance >/dev/null
       - name: Verify protected release and artifact contracts
         run: |
           python3 .github/scripts/test_vallery_release_workflows.py
