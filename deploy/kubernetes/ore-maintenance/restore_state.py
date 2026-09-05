@@ -1,4 +1,5 @@
 """Restore an operator-custodied snapshot into fresh maintenance emptyDir volumes."""
+from contextlib import closing
 import hashlib
 import io
 import json
@@ -50,7 +51,7 @@ def restore(raw, roots):
     with tempfile.TemporaryDirectory(dir=roots["data"]) as tmp:
         db = Path(tmp) / "verify.db"
         db.write_bytes(files["data/frigate.db"])
-        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as connection:
+        with closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as connection:
             if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise ValueError("restored SQLite integrity failed")
     for name, data in files.items():

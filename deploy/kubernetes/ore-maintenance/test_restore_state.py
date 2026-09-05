@@ -1,3 +1,4 @@
+from contextlib import closing
 import hashlib
 import importlib.util
 import io
@@ -16,7 +17,7 @@ spec.loader.exec_module(m)
 def snapshot(quiesced=True, extra=None, bad_hash=False):
     with tempfile.TemporaryDirectory() as tmp:
         db = Path(tmp) / 'data.db'
-        with sqlite3.connect(db) as c:
+        with closing(sqlite3.connect(db)) as c, c:
             c.execute('CREATE TABLE retained(value TEXT)')
             c.execute("INSERT INTO retained VALUES ('owned-state')")
         files = {'data/frigate.db': db.read_bytes(), 'config/.jwt_secret': b'fixture-only-auth', 'media/retained.txt': b'retained-media'}
@@ -46,7 +47,7 @@ class RestoreTests(unittest.TestCase):
             self.assertEqual(result['file_count'], 3)
             self.assertEqual((roots['config']/'.jwt_secret').read_bytes(), b'fixture-only-auth')
             self.assertEqual((roots['media']/'retained.txt').read_bytes(), b'retained-media')
-            with sqlite3.connect(roots['data']/'frigate.db') as db:
+            with closing(sqlite3.connect(roots['data']/'frigate.db')) as db:
                 self.assertEqual(db.execute('SELECT value FROM retained').fetchone()[0], 'owned-state')
             self.assertEqual((roots['config']/'.jwt_secret').stat().st_mode & 0o777, 0o600)
 
