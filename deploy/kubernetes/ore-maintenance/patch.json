@@ -1,0 +1,86 @@
+[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/initContainers/0",
+    "value": {
+      "name": "restore-maintenance-state",
+      "image": "registry.vallery.net/jvallery/frigate@sha256:b05683eb98bf27cca2955eb2db6de34d2408b99b962752ff9e6636d09577d36a",
+      "imagePullPolicy": "Always",
+      "command": [
+        "python3",
+        "/restore/restore_state.py"
+      ],
+      "resources": {
+        "requests": {
+          "cpu": "50m",
+          "memory": "128Mi"
+        },
+        "limits": {
+          "cpu": "500m",
+          "memory": "256Mi"
+        }
+      },
+      "securityContext": {
+        "allowPrivilegeEscalation": false,
+        "readOnlyRootFilesystem": true,
+        "capabilities": {
+          "drop": [
+            "ALL"
+          ]
+        }
+      },
+      "volumeMounts": [
+        {
+          "name": "config",
+          "mountPath": "/config"
+        },
+        {
+          "name": "data",
+          "mountPath": "/data"
+        },
+        {
+          "name": "media",
+          "mountPath": "/media/frigate"
+        },
+        {
+          "name": "maintenance-snapshot",
+          "mountPath": "/snapshot",
+          "readOnly": true
+        },
+        {
+          "name": "maintenance-restore",
+          "mountPath": "/restore",
+          "readOnly": true
+        }
+      ]
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/initContainers/1/args",
+    "value": [
+      "test -f /config/config.yml || cp -f /config-source/config.yml /config/config.yml"
+    ]
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes/-",
+    "value": {
+      "name": "maintenance-snapshot",
+      "secret": {
+        "secretName": "frigate-dev-maintenance-state-20260905",
+        "defaultMode": 256
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes/-",
+    "value": {
+      "name": "maintenance-restore",
+      "configMap": {
+        "name": "frigate-dev-maintenance-restore"
+      }
+    }
+  }
+]
