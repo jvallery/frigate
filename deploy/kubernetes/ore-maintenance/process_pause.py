@@ -57,8 +57,11 @@ def resume(intent, read=process, send=os.kill):
     return {'resumed_count': len(resumed)}
 
 
-def pause(intent):
+def pause(intent, deadline):
     # The launcher verifies the independently running resume Job before this call.
+    now = time.time()
+    if not isinstance(deadline, (int, float)) or not now + 20 <= deadline <= now + 120:
+        raise ValueError("pause deadline is expired, imminent or exceeds liveness margin")
     if inspect() != intent:
         raise ValueError('writer identity changed before pause')
     stopped = []
@@ -82,7 +85,9 @@ def pause(intent):
 if __name__ == '__main__':
     mode = sys.argv[1]
     if mode == 'inspect': result = inspect()
-    elif mode == 'pause': result = pause(json.load(sys.stdin))
+    elif mode == 'pause':
+        envelope = json.load(sys.stdin)
+        result = pause(envelope['writers'], envelope['deadline'])
     elif mode == 'resume': result = resume(json.load(sys.stdin))
     else: raise SystemExit('unknown mode')
     print(json.dumps(result, sort_keys=True))

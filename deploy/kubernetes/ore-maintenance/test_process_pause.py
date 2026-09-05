@@ -30,14 +30,20 @@ class PauseTests(unittest.TestCase):
 
     def test_identity_change_prevents_any_pause(self):
         with mock.patch.object(m, 'inspect', return_value={'changed':True}), mock.patch.object(m.os, 'kill') as kill:
-            with self.assertRaisesRegex(ValueError, 'before pause'):m.pause(intent())
+            with self.assertRaisesRegex(ValueError, 'before pause'):m.pause(intent(), m.time.time()+60)
             kill.assert_not_called()
 
     def test_partial_pause_failure_resumes_already_paused_original(self):
         d = intent(); original=d['processes'][0]
         with mock.patch.object(m, 'inspect', return_value=d), mock.patch.object(m, 'process', side_effect=lambda p: original if p==100 else None), mock.patch.object(m.os, 'kill') as kill:
-            with self.assertRaisesRegex(ValueError, 'during pause'):m.pause(d)
+            with self.assertRaisesRegex(ValueError, 'during pause'):m.pause(d, m.time.time()+60)
             self.assertEqual(kill.call_args_list, [mock.call(100, signal.SIGSTOP), mock.call(100, signal.SIGCONT)])
+
+    def test_expired_imminent_or_overlong_pause_never_signals(self):
+        for remaining in [-1, 19, 121]:
+            with mock.patch.object(m, 'inspect') as inspect, mock.patch.object(m.os, 'kill') as kill:
+                with self.assertRaisesRegex(ValueError, 'deadline'):m.pause(intent(), m.time.time()+remaining)
+                inspect.assert_not_called();kill.assert_not_called()
 
     def test_init_process_is_protected(self):
         d=intent();d['processes'][0]['pid']=1

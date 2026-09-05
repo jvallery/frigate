@@ -63,6 +63,10 @@ class RestoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'empty'): m.restore(snapshot(), roots)
             self.assertEqual((roots['config']/'retained').read_bytes(), b'original')
 
+    def test_compressed_secret_payload_bound(self):
+        with self.assertRaisesRegex(ValueError, 'bound'):
+            m.validate_snapshot(b'x' * (m.MAX_ARCHIVE_BYTES+1))
+
     def test_tampered_archive_refused(self):
         with self.assertRaisesRegex(ValueError, 'fixity'): m.validate_snapshot(snapshot(bad_hash=True))
 

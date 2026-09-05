@@ -14,7 +14,7 @@ def render(envelope, image, now):
         raise ValueError('operation outside bounded scope')
     if not re.fullmatch(r'frigate-dev-[a-z0-9]+-[a-z0-9]+', envelope['pod_name']):
         raise ValueError('guard target differs')
-    if str(uuid.UUID(envelope['pod_uid'])) != envelope['pod_uid'] or not now + 60 <= envelope['deadline'] <= now + 300:
+    if str(uuid.UUID(envelope['pod_uid'])) != envelope['pod_uid'] or not now + 60 <= envelope['deadline'] <= now + 120:
         raise ValueError('guard identity or lifetime differs')
     if not re.fullmatch(r'registry.vallery.net/jvallery/agents-agent-dev-runtime@sha256:[0-9a-f]{64}', image):
         raise ValueError('qualified operator runtime digest required')

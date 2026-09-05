@@ -13,6 +13,8 @@ def original_pod(envelope):
 def run(envelope):
     if not original_pod(envelope):
         raise ValueError('original Pod absent before guard readiness')
+    if time.time() + 40 > envelope['deadline']:
+        raise ValueError('insufficient remaining lifetime for readiness')
     print(json.dumps({'schema': 'frigate.resume-guard/v1', 'phase': 'ready', 'operation': envelope['operation'], 'pod_uid': envelope['pod_uid'], 'deadline': envelope['deadline']}), flush=True)
     while time.time() < envelope['deadline']:
         time.sleep(max(0.01, min(2, envelope['deadline'] - time.time())))

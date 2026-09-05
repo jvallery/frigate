@@ -9,10 +9,11 @@ import tarfile
 import tempfile
 
 MAX_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 768 * 1024
 
 
 def validate_snapshot(raw):
-    if len(raw) > MAX_BYTES:
+    if len(raw) > MAX_ARCHIVE_BYTES:
         raise ValueError("snapshot exceeds bound")
     files = {}
     with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as archive:

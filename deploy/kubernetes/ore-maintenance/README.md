@@ -14,7 +14,7 @@ a live WAL file, nonempty destinations and a snapshot that does not attest
 writer quiescence. SQLite integrity is checked before any restored file is
 written. Generated authentication state is restored privately; logs contain
 only the archive digest, file count and integrity result. Config seeding keeps
-the restored configuration. The archive has a 64MiB expanded bound.
+the restored configuration. The archive has a 768KiB compressed bound, leaving room below the Kubernetes Secret limit, and a 64MiB expanded bound. Larger state must fail closed and use a separately qualified storage handoff; it must never be truncated.
 
 Before activation, the operator must qualify the helper against the actual
 image and preserve the exact original Pod UID and complete private snapshot.
@@ -45,7 +45,7 @@ restricted to GET and EXEC of the exact original development Pod. It uses the
 existing operator-runtime pull identity in agent-fleet-repo-auth; the Frigate
 workload continues using its distinct Frigate-only identity. The operator must
 supply an actually qualified runtime digest. The guard verifies the Pod UID,
-waits no more than five minutes, then resumes only recorded process start times
+waits no more than two minutes, then resumes only recorded process start times
 and command hashes. A matching private marker inside the original Pod closes
 the get-to-exec replacement race. The caller must create this marker and observe
 the actual Job's ready receipt before invoking `process_pause.py pause`.
@@ -57,3 +57,9 @@ may be paused. The guard independently resumes the exact originals even if the
 operator disconnects. If the original Pod is gone, it does not target a successor.
 The operator retains the terminal guard receipt and removes only the exact owned
 Job, ConfigMap, RBAC and NetworkPolicy UIDs after restoration is verified.
+
+Guard readiness is refused with less than40 seconds remaining. The pause path
+independently refuses expired, imminent (less than20 seconds) or overlong
+(more than120 seconds) deadlines. This stays below the inherited eight-failure,
+30-second liveness restart window. Qualify current liveness health before
+pausing; never rely on the guard to repair an already failing container.
