@@ -5,21 +5,27 @@ import subprocess
 import time
 
 
-def original_pod(envelope):
+def original_state(envelope):
     result = subprocess.run(['kubectl', '-n', 'frigate-dev', 'get', 'pod', envelope['pod_name'], '-o', 'json', '--ignore-not-found'], capture_output=True, text=True, timeout=15, check=True)
-    return bool(result.stdout.strip()) and json.loads(result.stdout)['metadata']['uid'] == envelope['pod_uid']
+    if not result.stdout.strip():
+        return 'absent'
+    metadata = json.loads(result.stdout)['metadata']
+    if metadata['uid'] != envelope['pod_uid']:
+        return 'different-uid'
+    return 'terminating' if metadata.get('deletionTimestamp') else 'present'
 
 
 def run(envelope):
-    if not original_pod(envelope):
-        raise ValueError('original Pod absent before guard readiness')
+    if original_state(envelope) != 'present':
+        raise ValueError('original Pod absent or terminating before guard readiness')
     if time.time() + 40 > envelope['deadline']:
         raise ValueError('insufficient remaining lifetime for readiness')
     print(json.dumps({'schema': 'frigate.resume-guard/v1', 'phase': 'ready', 'operation': envelope['operation'], 'pod_uid': envelope['pod_uid'], 'deadline': envelope['deadline']}), flush=True)
     while time.time() < envelope['deadline']:
         time.sleep(max(0.01, min(2, envelope['deadline'] - time.time())))
-    if not original_pod(envelope):
-        print(json.dumps({'phase': 'original-pod-gone', 'operation': envelope['operation']}), flush=True)
+    state = original_state(envelope)
+    if state != 'present':
+        print(json.dumps({'phase': 'original-pod-' + state, 'operation': envelope['operation']}), flush=True)
         return
     helper = Path('/guard/process_pause.py').read_text()
     marker = '/tmp/' + envelope['operation'] + '.json'
