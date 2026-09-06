@@ -30,9 +30,35 @@ class GuardTests(unittest.TestCase):
     def test_expired_or_imminent_guard_never_emits_ready(self):
         for deadline in [999, 1039]:
             d=intent();d['deadline']=deadline
-            with mock.patch.object(g,'original_pod',return_value=True), mock.patch.object(g.time,'time',return_value=1000), mock.patch('builtins.print') as out:
+            with mock.patch.object(g,'original_state',return_value='present'), mock.patch.object(g.time,'time',return_value=1000), mock.patch('builtins.print') as out:
                 with self.assertRaisesRegex(ValueError,'remaining lifetime'):g.run(d)
                 out.assert_not_called()
+
+    def test_terminating_original_never_executes_resume(self):
+        d = intent()
+        with mock.patch.object(g, 'original_state', side_effect=['present', 'terminating']), \
+             mock.patch.object(g.time, 'time', side_effect=[1000, 1111]), \
+             mock.patch.object(g.subprocess, 'run') as execute, mock.patch('builtins.print') as output:
+            g.run(d)
+            execute.assert_not_called()
+            self.assertIn('original-pod-terminating', output.call_args[0][0])
+
+    def test_original_state_distinguishes_deletion_from_absence(self):
+        import json
+        metadata = {'uid': intent()['pod_uid'], 'deletionTimestamp': '2026-09-06T00:00:00Z'}
+        with mock.patch.object(g.subprocess, 'run', return_value=mock.Mock(stdout=json.dumps({'metadata': metadata}))):
+            self.assertEqual(g.original_state(intent()), 'terminating')
+
+    def test_named_handoff_fixture_retains_exact_uid_name_authority(self):
+        d = intent(); d['operation'] = 'frigate-ore-handoff-v1'
+        d['pod_name'] = 'frigate-dev-handofffixture-v1-557559664d-2vl6q'
+        result = m.render(d, self.image, 1000)
+        role = next(row for row in result['items'] if row['kind'] == 'Role')
+        self.assertTrue(all(rule['resourceNames'] == [d['pod_name']] for rule in role['rules']))
+        for operation in ('frigate-ore-other', 'frigate-ore-handoff-v2'):
+            d['operation'] = operation
+            with self.assertRaisesRegex(ValueError, 'guard target'):
+                m.render(d, self.image, 1000)
 
     def test_missing_or_unbounded_deadline_rejected(self):
         for deadline in [999,1059,1121]:

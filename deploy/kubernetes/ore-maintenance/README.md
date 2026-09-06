@@ -63,3 +63,32 @@ independently refuses expired, imminent (less than20 seconds) or overlong
 (more than120 seconds) deadlines. This stays below the inherited eight-failure,
 30-second liveness restart window. Qualify current liveness health before
 pausing; never rely on the guard to repair an already failing container.
+
+## Commit boundary for the operator handoff
+
+An Argo sync request is asynchronous. Do not enqueue replacement while relying
+on completion before the pause guard deadline: a late rollout after writer
+resume would restore a stale snapshot. A disabled Application may be staged at
+the accepted overlay revision in advance; this is not workload activation.
+
+The final operator sequence must first persist and verify the quiesced archive
+and immutable Secret, then establish an explicit original-workload termination
+boundary. Record the exact Deployment UID/resourceVersion and a scale-to-zero
+intent, remove resume authorization by changing the private marker only once
+snapshot custody is verified, and perform the exact scale transition. The
+changed marker intentionally prevents the old guard from authorizing resume.
+Do not submit the restore rollout until the original Pod and its container are
+confirmed stopped; retain the archive and exact operation handles throughout.
+The guard also refuses to resume an original Pod already marked terminating.
+
+Before that commit boundary, failure recovery is independent timed resume.
+After it, recovery uses the private archive and accepted restore overlay; it is
+not claimed as automatic resume. If a scale request has an unknown outcome,
+reconcile the same Deployment/Pod identities before continuing. If original
+writers resumed without termination, the old snapshot is no longer a current
+handoff: capture a new one before replacement. Never retry a delayed mutation
+against a newly resumed original or a successor Pod.
+
+This protocol must be qualified as an entire bounded operator sequence before
+production execution. The disposable pause/resume and snapshot fixtures alone
+do not demonstrate complete handoff recovery or physical-host continuity.

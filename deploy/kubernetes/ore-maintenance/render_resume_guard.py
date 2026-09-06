@@ -12,7 +12,10 @@ def render(envelope, image, now):
         raise ValueError('guard envelope differs')
     if not re.fullmatch(r'frigate-ore-[a-z0-9-]{1,20}', envelope['operation']):
         raise ValueError('operation outside bounded scope')
-    if not re.fullmatch(r'frigate-dev-[a-z0-9]+-[a-z0-9]+', envelope['pod_name']):
+    production_target = re.fullmatch(r'frigate-dev-[a-z0-9]+-[a-z0-9]+', envelope['pod_name'])
+    fixture_target = (envelope['operation'] == 'frigate-ore-handoff-v1'
+                      and re.fullmatch(r'frigate-dev-handofffixture-v1-[a-z0-9]+-[a-z0-9]+', envelope['pod_name']))
+    if not production_target and not fixture_target:
         raise ValueError('guard target differs')
     if str(uuid.UUID(envelope['pod_uid'])) != envelope['pod_uid'] or not now + 60 <= envelope['deadline'] <= now + 120:
         raise ValueError('guard identity or lifetime differs')
