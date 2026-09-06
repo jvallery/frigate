@@ -49,6 +49,17 @@ class GuardTests(unittest.TestCase):
         with mock.patch.object(g.subprocess, 'run', return_value=mock.Mock(stdout=json.dumps({'metadata': metadata}))):
             self.assertEqual(g.original_state(intent()), 'terminating')
 
+    def test_named_handoff_fixture_retains_exact_uid_name_authority(self):
+        d = intent(); d['operation'] = 'frigate-ore-handoff-v1'
+        d['pod_name'] = 'frigate-dev-handofffixture-v1-557559664d-2vl6q'
+        result = m.render(d, self.image, 1000)
+        role = next(row for row in result['items'] if row['kind'] == 'Role')
+        self.assertTrue(all(rule['resourceNames'] == [d['pod_name']] for rule in role['rules']))
+        for operation in ('frigate-ore-other', 'frigate-ore-handoff-v2'):
+            d['operation'] = operation
+            with self.assertRaisesRegex(ValueError, 'guard target'):
+                m.render(d, self.image, 1000)
+
     def test_missing_or_unbounded_deadline_rejected(self):
         for deadline in [999,1059,1121]:
             d=intent();d['deadline']=deadline
