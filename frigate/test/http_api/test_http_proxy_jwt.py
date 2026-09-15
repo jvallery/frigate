@@ -1,14 +1,16 @@
 """Cryptographic proxy identity and native integration boundary tests."""
 
 import json
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 from joserfc import jwt
-from joserfc.jwk import RSAKey
+from joserfc.jwk import OctKey, RSAKey
 from pydantic import ValidationError
 
 from frigate.api import auth as auth_module
@@ -283,3 +285,91 @@ class TestHttpProxyJwt(unittest.TestCase):
         ]:
             with self.subTest(url=url), self.assertRaises(ValidationError):
                 ProxyJwtConfig(issuer=ISSUER, audience=AUDIENCE, jwks_url=url)
+
+
+class TestHttpProxyHmac(unittest.TestCase):
+    setUpClass = TestHttpProxyJwt.__dict__["setUpClass"]
+    claims = TestHttpProxyJwt.claims
+    request = TestHttpProxyJwt.request
+    native_token = TestHttpProxyJwt.native_token
+    test_verified_local_user_is_viewer_without_native_account = (
+        TestHttpProxyJwt.test_verified_local_user_is_viewer_without_native_account
+    )
+    test_admin_mapping_uses_signed_groups = (
+        TestHttpProxyJwt.test_admin_mapping_uses_signed_groups
+    )
+    test_wrong_missing_expired_or_malformed_claims_are_rejected = (
+        TestHttpProxyJwt.test_wrong_missing_expired_or_malformed_claims_are_rejected
+    )
+    test_invalid_signed_identity_never_falls_back_to_native_cookie = (
+        TestHttpProxyJwt.test_invalid_signed_identity_never_falls_back_to_native_cookie
+    )
+    test_native_bearer_and_refresh_work_without_proxy_jwt = (
+        TestHttpProxyJwt.test_native_bearer_and_refresh_work_without_proxy_jwt
+    )
+    test_metrics_credential_remains_scoped_without_proxy_jwt = (
+        TestHttpProxyJwt.test_metrics_credential_remains_scoped_without_proxy_jwt
+    )
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.secret_path = Path(self.directory.name) / "proxy-key"
+        self.secret_path.write_bytes(
+            b"test-only-provider-secret-with-256-bits-of-length"
+        )
+        TestHttpProxyJwt.setUp(self)
+
+    def _create_app(self):
+        app = TestHttpProxyJwt._create_app(self)
+        app.frigate_config.proxy.jwt = ProxyJwtConfig(
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            algorithm="HS256",
+            secret_file=str(self.secret_path),
+        )
+        return app
+
+    def token(self, claims=None, key=None):
+        secret = (
+            b"different-test-provider-secret-with-sufficient-length"
+            if key
+            else self.secret_path.read_bytes()
+        )
+        return jwt.encode(
+            {"alg": "HS256"}, claims or self.claims(), OctKey.import_key(secret)
+        )
+
+    def test_missing_short_oversized_and_public_keys_fail_closed(self):
+        token = self.token()
+        for secret in (
+            b"short",
+            b"x" * 4097,
+            b"-----BEGIN PUBLIC KEY-----" + b"x" * 100,
+        ):
+            self.secret_path.write_bytes(secret)
+            self.assertEqual(self.request(token).status_code, 401)
+        self.secret_path.unlink()
+        self.assertEqual(self.request(token).status_code, 401)
+        self.http.assert_not_called()
+
+    def test_rsa_token_cannot_choose_algorithm_or_key_source(self):
+        token = jwt.encode(
+            {"alg": "RS256", "kid": "trusted", "jku": JWKS_URL}, self.claims(), self.key
+        )
+        self.assertEqual(self.request(token).status_code, 401)
+        self.http.assert_not_called()
+
+    def test_key_source_and_algorithm_must_match(self):
+        for fields in (
+            {"algorithm": "HS256", "jwks_url": JWKS_URL},
+            {"algorithm": "RS256", "secret_file": str(self.secret_path)},
+            {"algorithm": "HS256", "secret_file": "relative"},
+            {
+                "algorithm": "HS256",
+                "secret_file": str(self.secret_path),
+                "jwks_url": JWKS_URL,
+            },
+        ):
+            with self.assertRaises(ValidationError):
+                ProxyJwtConfig(issuer=ISSUER, audience=AUDIENCE, **fields)

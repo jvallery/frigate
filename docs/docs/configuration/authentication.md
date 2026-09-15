@@ -168,7 +168,8 @@ proxy:
   jwt:
     issuer: https://auth.example/application/o/frigate/
     audience: <the Frigate proxy provider client ID>
-    jwks_url: https://auth.example/application/o/frigate/jwks/
+    algorithm: HS256
+    secret_file: /run/secrets/authentik-proxy-client-secret
   separator: "|"
   default_role: viewer
   header_map:
@@ -180,9 +181,11 @@ proxy:
   logout_url: /outpost.goauthentik.io/sign_out
 ```
 
-Select an RSA signing certificate on the Authentik proxy provider and retain
-its `openid`, `profile`, and `groups` scopes. Only RS256 with RSA keys of at least
-2048 bits is accepted. The issuer and single application audience must match;
+Authentik proxy providers issue HS256 tokens using their existing client secret.
+Mount that secret read-only at the configured absolute path; never place it in
+Frigate YAML or expose it to browsers. Retain the provider's identity scopes.
+The configured algorithm is pinned; token headers cannot choose a different
+algorithm, URL, or key. The issuer and single application audience must match;
 expiration, issuance time, subject, username, and typed groups are required.
 Only the verified username and groups affect identity. Unsigned headers cannot
 change a signed viewer into an admin. An invalid assertion is rejected even if
@@ -196,7 +199,14 @@ the unauthenticated port loopback-only. Set short access-token lifetimes in
 Authentik to bound bearer replay. Logout invalidates the outpost session; an
 already issued assertion remains cryptographically valid until its expiry.
 
-Signing keys are fetched only from the configured HTTPS URL, with no redirects
+HS256 keys are read from the configured file for each verification, so a missing
+or invalid mount fails closed and a secret rotation takes effect immediately.
+Use the exact secret bytes (no added newline). Never use a public key as an HMAC
+secret. This secret permits token signing and must remain private.
+
+For providers supporting asymmetric signing, set `algorithm: RS256` and
+`jwks_url` instead of `secret_file`. Only RSA keys of at least 2048 bits are
+accepted. Public signing keys are fetched only from the configured HTTPS URL, with no redirects
 and bounded response size/time. Public keys are cached for at most five minutes;
 a failed refresh rejects proxy sessions without blocking native integrations.
 For key rotation, publish overlapping signing keys for at least this cache

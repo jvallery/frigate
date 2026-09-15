@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import requests
 from joserfc import jwt
 from joserfc.errors import JoseError
-from joserfc.jwk import KeySet
+from joserfc.jwk import KeySet, OctKey
 
 from frigate.config.proxy import ProxyJwtConfig
 
@@ -76,7 +76,17 @@ def verify_proxy_identity(encoded: str, config: ProxyJwtConfig) -> ProxyIdentity
     if not encoded or len(encoded) > 32768:
         return None
     try:
-        token = jwt.decode(encoded, _get_keys(config.jwks_url), algorithms=["RS256"])
+        if config.algorithm == "HS256":
+            # Read only the operator-configured mount, never a token header URL
+            # or key. Re-read for rotation and fail closed on missing mounts.
+            with open(config.secret_file, "rb") as secret_file:
+                secret = secret_file.read(4097)
+            if not 32 <= len(secret) <= 4096 or b"-----BEGIN" in secret:
+                return None
+            key = OctKey.import_key(secret)
+        else:
+            key = _get_keys(config.jwks_url)
+        token = jwt.decode(encoded, key, algorithms=[config.algorithm])
         claims = token.claims
         jwt.JWTClaimsRegistry(
             leeway=0,
@@ -105,6 +115,13 @@ def verify_proxy_identity(encoded: str, config: ProxyJwtConfig) -> ProxyIdentity
         ):
             return None
         return ProxyIdentity(username, tuple(groups))
-    except (JoseError, ValueError, TypeError, KeyError, requests.RequestException):
+    except (
+        JoseError,
+        ValueError,
+        TypeError,
+        KeyError,
+        OSError,
+        requests.RequestException,
+    ):
         # Never log the token, claims, or upstream response bodies.
         return None
