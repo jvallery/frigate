@@ -15,7 +15,7 @@ metadata:
     vallery.net/release-id: v0.18.0-vallery.20260824.7
     vallery.net/image-variant: standard-amd64
 spec:
-  replicas: 1
+  replicas: 0
   revisionHistoryLimit: 2
   strategy:
     type: Recreate

@@ -18,7 +18,7 @@ index ea9e3b808..3e66722a2 100644
 +    vallery.net/release-id: v0.18.0-vallery.20260823.5
      vallery.net/image-variant: standard-amd64
  spec:
-   replicas: 1
+   replicas: 0
 @@ -28,8 +28,8 @@ spec:
          app.kubernetes.io/name: frigate-dev
          app.kubernetes.io/part-of: frigate
