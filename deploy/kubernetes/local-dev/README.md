@@ -9,6 +9,15 @@ deployment mechanism.
 one ConfigMap, Deployment, Service, ServiceAccount, and Ingress. It does not
 render a Namespace, Secret, PVC, RBAC object, or NetworkPolicy.
 
+## Parked runtime (2026-09-15)
+
+The owner has suspended development. Desired replicas are zero and the runtime
+validator requires zero, so Argo self-healing and image-only promotions cannot
+restart the workload. Keep the Application, Deployment, Service, Ingress, and
+configuration as the placeholder. There is no HPA or CronJob in this namespace.
+Resuming development requires an explicit source change to both the replica
+count and validator. The development hostname has no backend while parked.
+
 ## Private platform contract
 
 The private platform repository supplies, without granting this public tree

@@ -306,7 +306,7 @@ class LocalDevPromotionTest(unittest.TestCase):
             manifest_path = self.write_manifest(root)
             deployment.write_text(
                 deployment.read_text(encoding="utf-8").replace(
-                    "replicas: 1", "replicas: 2"
+                    "replicas: 0", "replicas: 2"
                 ),
                 encoding="utf-8",
             )

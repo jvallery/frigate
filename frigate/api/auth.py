@@ -90,6 +90,7 @@ def require_admin_by_default():
         "/sub_labels",
         "/plus/models",
         "/recognized_license_plates",
+        "/classification/attributes",
         "/timeline",
         "/timeline/hourly",
         "/recordings/storage",

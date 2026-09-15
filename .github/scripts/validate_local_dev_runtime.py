@@ -215,7 +215,7 @@ def validate_deployment(document: dict[str, Any]) -> None:
     )
 
     spec = document.get("spec") or {}
-    require(spec.get("replicas") == 1, "Deployment must have one replica")
+    require(spec.get("replicas") == 0, "Development is parked: Deployment must have zero replicas")
     require(spec.get("strategy", {}).get("type") == "Recreate", "strategy drifted")
     selector = spec.get("selector", {}).get("matchLabels") or {}
     require(
