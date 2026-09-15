@@ -1,7 +1,7 @@
 {
     "record": {
         "export": {
-            "label": "Išrašų konfiguracija",
+            "label": "Išrašo konfiguracija",
             "description": "Nustatymai naudojami kuriant įrašų išrašus tokie kaip timelaps ir hardware acceleration.",
             "hwaccel_args": {
                 "label": "Išrašų hwaccel args",
@@ -14,6 +14,13 @@
             "chapters": {
                 "label": "Epizodo metaduomenys bus įterpti į išsaugotuose įrašuose"
             }
+        }
+    },
+    "lpr": {
+        "label": "Registracijos Numerių Atpažinimas",
+        "description": "Registracijos numerių atpažinimo nustatymai įskaitant aptikimo ribas, formatavima ir žinomus numerius.",
+        "enabled": {
+            "label": "Įjungti RNA"
         }
     }
 }
