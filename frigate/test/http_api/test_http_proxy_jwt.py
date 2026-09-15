@@ -255,7 +255,12 @@ class TestHttpProxyJwt(unittest.TestCase):
                 self.assertEqual(self.request(self.token()).status_code, 401)
 
     def test_rsa_signature_algorithm_cannot_be_downgraded(self):
-        token = jwt.encode({"alg": "RS512", "kid": "trusted"}, self.claims(), self.key)
+        token = jwt.encode(
+            {"alg": "RS512", "kid": "trusted"},
+            self.claims(),
+            self.key,
+            algorithms=["RS512"],
+        )
         self.assertEqual(self.request(token).status_code, 401)
 
     def test_tls_failure_rejects_proxy_but_keeps_native_access(self):
