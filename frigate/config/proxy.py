@@ -1,3 +1,5 @@
+from urllib.parse import urlsplit
+
 from pydantic import Field, field_validator
 
 from .base import FrigateBaseModel
@@ -24,7 +26,33 @@ class HeaderMappingConfig(FrigateBaseModel):
     )
 
 
+class ProxyJwtConfig(FrigateBaseModel):
+    issuer: str = Field(min_length=1, title="Trusted token issuer")
+    audience: str = Field(min_length=1, title="Application client ID")
+    jwks_url: str = Field(title="HTTPS signing keys URL")
+
+    @field_validator("issuer", "jwks_url")
+    @classmethod
+    def require_https_origin(cls, value):
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.fragment
+            or parsed.query
+        ):
+            raise ValueError("Proxy JWT endpoints must be explicit HTTPS URLs")
+        return value
+
+
 class ProxyConfig(FrigateBaseModel):
+    jwt: ProxyJwtConfig | None = Field(
+        default=None,
+        title="Signed proxy identity",
+        description="Validate X-Authentik-JWT with RS256 and pinned issuer, audience, and HTTPS signing keys. Native authentication remains enabled for integrations.",
+    )
     header_map: HeaderMappingConfig = Field(
         default_factory=HeaderMappingConfig,
         title="Header mapping",

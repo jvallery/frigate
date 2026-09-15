@@ -154,6 +154,56 @@ Frigate can be configured to leverage features of common upstream authentication
 
 If you are leveraging the authentication of an upstream proxy, you likely want to disable Frigate's authentication as there is no correspondence between users in Frigate's database and users authenticated via the proxy. Optionally, if communication between the reverse proxy and Frigate is over an untrusted network, you should set an `auth_secret` in the `proxy` config and configure the proxy to send the secret value as a header named `X-Proxy-Secret`. Assuming this is an untrusted network, you will also want to [configure a real TLS certificate](tls.md) to ensure the traffic can't simply be sniffed to steal the secret.
 
+### Signed Authentik identity with native integrations (Vallery)
+
+The Vallery fork can verify Authentik's `X-Authentik-JWT` assertion while retaining
+native authentication for Home Assistant and the dedicated metrics bearer. The
+Authentik outpost handles the OAuth2/OIDC browser flow. Frigate validates the
+signed assertion; it does not implement an OIDC browser client.
+
+```yaml
+auth:
+  enabled: true
+proxy:
+  jwt:
+    issuer: https://auth.example/application/o/frigate/
+    audience: <the Frigate proxy provider client ID>
+    jwks_url: https://auth.example/application/o/frigate/jwks/
+  separator: "|"
+  default_role: viewer
+  header_map:
+    user: x-authentik-username
+    role: x-authentik-groups
+    role_map:
+      admin:
+        - Frigate Admins
+  logout_url: /outpost.goauthentik.io/sign_out
+```
+
+Select an RSA signing certificate on the Authentik proxy provider and retain
+its `openid`, `profile`, and `groups` scopes. Only RS256 with RSA keys of at least
+2048 bits is accepted. The issuer and single application audience must match;
+expiration, issuance time, subject, username, and typed groups are required.
+Only the verified username and groups affect identity. Unsigned headers cannot
+change a signed viewer into an admin. An invalid assertion is rejected even if
+a valid old native cookie is present. Without the assertion header, native
+credentials and the metrics-only bearer retain their existing behavior.
+
+Keep the Authentik forward-auth check on every public route, strip incoming
+identity headers before that check, and forward `X-Authentik-JWT` from its
+response. Use verified HTTPS on both the outpost and Frigate backend hops. Keep
+the unauthenticated port loopback-only. Set short access-token lifetimes in
+Authentik to bound bearer replay. Logout invalidates the outpost session; an
+already issued assertion remains cryptographically valid until its expiry.
+
+Signing keys are fetched only from the configured HTTPS URL, with no redirects
+and bounded response size/time. Public keys are cached for at most five minutes;
+a failed refresh rejects proxy sessions without blocking native integrations.
+For key rotation, publish overlapping signing keys for at least this cache
+interval before issuing tokens under a new key. This mode does not require a
+shared `proxy.auth_secret`; configuring that legacy setting retains its global
+secret gate, including for native clients.
+
 To disable Frigate's authentication and ensure requests come only from your known proxy:
 
 <ConfigTabs>

@@ -31,6 +31,7 @@ from frigate.api.media_auth import (
     deny_response_for_media_uri,
     is_role_restricted,
 )
+from frigate.api.proxy_jwt import verify_proxy_identity
 from frigate.config import AuthConfig, ProxyConfig
 from frigate.const import CONFIG_DIR, JWT_SECRET_ENV_VAR, PASSWORD_HASH_ALGORITHM
 from frigate.models import User
@@ -719,11 +720,27 @@ def auth(request: Request):
         logger.debug("X-Proxy-Secret header does not match configured secret value")
         return fail_response
 
+    proxy_identity = None
+    signed_proxy_config = getattr(proxy_config, "jwt", None)
+    if signed_proxy_config is not None:
+        if not auth_config.enabled:
+            return fail_response
+        if "x-authentik-jwt" in request.headers:
+            proxy_identity = verify_proxy_identity(
+                request.headers["x-authentik-jwt"], signed_proxy_config
+            )
+            if proxy_identity is None:
+                return fail_response
+
     original_url = request.headers.get("x-original-url")
     frigate_config = request.app.frigate_config
 
     authorization = request.headers.get("authorization", "")
-    if auth_config.enabled and authorization.startswith("Bearer "):
+    if (
+        auth_config.enabled
+        and proxy_identity is None
+        and authorization.startswith("Bearer ")
+    ):
         bearer_token = authorization.removeprefix("Bearer ")
 
         # Native JWTs use the compact JWS form and always contain periods.
@@ -739,19 +756,33 @@ def auth(request: Request):
             return fail_response
 
     # if auth is disabled, just apply the proxy header map and return success
-    if not auth_config.enabled:
+    if not auth_config.enabled or proxy_identity is not None:
         # pass the user header value from the upstream proxy if a mapping is specified
         # or use viewer if none are specified
         user_header = proxy_config.header_map.user
         success_response.headers["remote-user"] = (
-            request.headers.get(user_header, default="viewer")
+            proxy_identity.username
+            if proxy_identity is not None
+            else request.headers.get(user_header, "viewer")
             if user_header
             else "viewer"
         )
 
         # parse header and resolve a valid role
         config_roles_set = set(auth_config.roles.keys())
-        role = resolve_role(request.headers, proxy_config, config_roles_set)
+        role_headers = request.headers
+        if proxy_identity is not None:
+            # Only signed groups may influence authorization; ignore every
+            # caller-provided user/group/role header and any old native cookie.
+            separator = proxy_config.separator or ","
+            if any(separator in group for group in proxy_identity.groups):
+                return fail_response
+            role_headers = (
+                {proxy_config.header_map.role: separator.join(proxy_identity.groups)}
+                if proxy_config.header_map.role
+                else {}
+            )
+        role = resolve_role(role_headers, proxy_config, config_roles_set)
 
         success_response.headers["remote-role"] = role
 
