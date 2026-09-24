@@ -7,6 +7,14 @@
     "sha": "77a66e75c61862b048a07c1295877f4b31343504"
   },
   "first_candidate_release": "v0.18.0-vallery.20260820.1",
+  "downstream_deletions": [
+    {
+      "path": "CLAUDE.md",
+      "reason": "Estate standard (2026-09-23): AGENTS.md is the only agent-instruction file. Upstream ships CLAUDE.md as a symlink to AGENTS.md, and Claude Code reads AGENTS.md natively only when no CLAUDE.md exists.",
+      "intake_resolution": "Keep it deleted. An upstream change to CLAUDE.md is a modify/delete conflict that fails the sync closed; resolve by keeping the deletion.",
+      "retirement_condition": "Retire when the selected upstream line no longer contains CLAUDE.md."
+    }
+  ],
   "patches": [
     {
       "id": "VLY-FRIGATE-001",
