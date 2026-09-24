@@ -42,5 +42,35 @@ class PathOwnershipTest(unittest.TestCase):
             )
 
 
+class DownstreamDeletionTest(unittest.TestCase):
+    ENTRY = {
+        "path": "CLAUDE.md",
+        "reason": "estate standard",
+        "intake_resolution": "keep deleted",
+        "retirement_condition": "upstream removes it",
+    }
+
+    @staticmethod
+    def tree(head: set[str], upstream: set[str]):
+        return lambda ref, path: path in (head if ref == "HEAD" else upstream)
+
+    def test_deleted_upstream_path_passes(self) -> None:
+        LEDGER.validate_downstream_deletions(
+            [self.ENTRY], "upstream", self.tree(set(), {"CLAUDE.md"})
+        )
+
+    def test_reintroduced_path_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "present at HEAD"):
+            LEDGER.validate_downstream_deletions(
+                [self.ENTRY], "upstream", self.tree({"CLAUDE.md"}, {"CLAUDE.md"})
+            )
+
+    def test_path_absent_upstream_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "retire the entry"):
+            LEDGER.validate_downstream_deletions(
+                [self.ENTRY], "upstream", self.tree(set(), set())
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,12 @@ REQUIRED_PATCH_FIELDS = {
     "migration_class",
     "rollback_class",
     "upstream",
+    "retirement_condition",
+}
+REQUIRED_DELETION_FIELDS = {
+    "path",
+    "reason",
+    "intake_resolution",
     "retirement_condition",
 }
 VALID_STATUSES = {"candidate", "carried", "upstreamed", "retired"}
@@ -129,6 +136,41 @@ def validate_upstream_links(value: Any, patch_id: str) -> None:
             "https://github.com/blakeblackshear/frigate/"
         ):
             fail(f"{patch_id}.upstream.{link_type} is not an upstream Frigate URL")
+
+
+def tree_has_path(ref: str, path: str) -> bool:
+    return bool(git("ls-tree", "--name-only", ref, "--", path))
+
+
+def validate_downstream_deletions(
+    value: Any,
+    selected_sha: str,
+    has_path: Callable[[str, str], bool] = tree_has_path,
+) -> None:
+    """Require each recorded deletion to remove an upstream path that HEAD lacks."""
+    if not isinstance(value, list):
+        fail("downstream_deletions must be a list")
+    seen: set[str] = set()
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != REQUIRED_DELETION_FIELDS:
+            fail(
+                "downstream_deletions entries require exactly "
+                f"{sorted(REQUIRED_DELETION_FIELDS)}"
+            )
+        for field in sorted(REQUIRED_DELETION_FIELDS):
+            require_string(entry[field], f"downstream_deletions.{field}")
+        path = entry["path"]
+        validate_path(path, "downstream_deletions.path", must_exist=False)
+        if path in seen:
+            fail(f"downstream_deletions lists {path} more than once")
+        seen.add(path)
+        if has_path("HEAD", path):
+            fail(f"downstream deletion {path} is present at HEAD; keep it deleted")
+        if not has_path(selected_sha, path):
+            fail(
+                f"downstream deletion {path} is absent from the selected upstream; "
+                "retire the entry"
+            )
 
 
 def validate_patch(entry: Any, selected_sha: str) -> tuple[str, str]:
@@ -224,6 +266,7 @@ def main() -> int:
         "ledger_owner",
         "selected_upstream",
         "first_candidate_release",
+        "downstream_deletions",
         "patches",
     }:
         fail("downstream patch ledger has missing or unknown top-level fields")
@@ -254,6 +297,7 @@ def main() -> int:
     )
     if not RELEASE_RE.fullmatch(first_release):
         fail("first_candidate_release is not a Vallery release ID")
+    validate_downstream_deletions(document["downstream_deletions"], selected_sha)
 
     patches = document["patches"]
     if not isinstance(patches, list) or not patches:
@@ -272,8 +316,9 @@ def main() -> int:
         )
 
     print(
-        f"verified {len(patches)} downstream patches at upstream {selected_sha}; "
-        f"first candidate {first_release}"
+        f"verified {len(patches)} downstream patches and "
+        f"{len(document['downstream_deletions'])} downstream deletions at upstream "
+        f"{selected_sha}; first candidate {first_release}"
     )
     return 0
 
