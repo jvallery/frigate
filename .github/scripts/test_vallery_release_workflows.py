@@ -263,18 +263,37 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         self.assertIn("--state open", body)
         self.assertNotIn("repos/blakeblackshear/frigate", body)
 
-    def test_verified_dev_intake_survives_later_branch_failure(self) -> None:
+    def test_verified_intake_survives_later_branch_failure(self) -> None:
         body = SYNC_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn(
-            'moved_dev="${new_sha}"\n'
-            '              echo "moved_dev=${moved_dev}" >> "${GITHUB_OUTPUT}"',
+            'if [[ "${branch}" == "${selected_branch}" ]]; then\n'
+            '              echo "intake_sha=${new_sha}" >> "${GITHUB_OUTPUT}"',
             body,
         )
         self.assertIn(
-            "if: always() && steps.mirrors.outputs.moved_dev != '' "
+            "if: always() && steps.mirrors.outputs.intake_sha != '' "
             "&& inputs.dry_run != true",
             body,
         )
+
+    def test_sync_tracks_policy_mirrors_and_verified_upstream_only(self) -> None:
+        body = SYNC_WORKFLOW.read_text(encoding="utf-8")
+        policy = json.loads(
+            (ROOT / ".vallery/upstream-policy.json").read_text(encoding="utf-8")
+        )
+        ledger = json.loads(
+            (ROOT / ".vallery/downstream-patches.json").read_text(encoding="utf-8")
+        )
+        self.assertIn(ledger["selected_upstream"]["branch"], policy["mirror_branches"])
+        self.assertIn("jq -er '.mirror_branches[]' .vallery/upstream-policy.json", body)
+        self.assertNotIn("0.19", body)
+        self.assertIn("actions/workflows/ci.yml/runs", body)
+        self.assertIn('state="held-awaiting-upstream-ci"', body)
+        self.assertIn("verify_mirror_update.py", body)
+        self.assertIn("classify_upstream_changes.py", body)
+        self.assertIn('-f source_sha="${intake_head}"', body)
+        self.assertNotIn('-f source_sha="${new_sha}"', body)
+        self.assertNotIn("gh pr merge", body)
 
     def test_bake_group_contains_exact_release_variants(self) -> None:
         body = BAKE.read_text(encoding="utf-8")

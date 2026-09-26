@@ -13,7 +13,7 @@
       "required": ["upstream_repository", "upstream_branch", "upstream_sha", "fork_repository", "fork_branch", "fork_sha"],
       "properties": {
         "upstream_repository": {"const": "blakeblackshear/frigate"},
-        "upstream_branch": {"enum": ["dev", "0.19"]},
+        "upstream_branch": {"enum": ["dev", "master"]},
         "upstream_sha": {"$ref": "#/$defs/sha"},
         "fork_repository": {"const": "jvallery/frigate"},
         "fork_branch": {"const": "vallery/prod"},

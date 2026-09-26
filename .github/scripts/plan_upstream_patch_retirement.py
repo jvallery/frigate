@@ -70,7 +70,7 @@ def plan(repo: Path, ledger_path: Path, upstream_ref: str) -> dict[str, Any]:
     branch = selected.get("branch")
     if not isinstance(selected_sha, str) or not SHA_RE.fullmatch(selected_sha):
         fail("selected upstream SHA is invalid")
-    if branch not in {"dev", "0.19"}:
+    if branch not in {"dev", "master"}:
         fail("selected upstream branch is not approved")
 
     upstream_tip = git(repo, "rev-parse", f"{upstream_ref}^{{commit}}")

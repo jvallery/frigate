@@ -3,7 +3,7 @@
   "upstream_repository": "blakeblackshear/frigate",
   "mirror_branches": [
     "dev",
-    "0.19"
+    "master"
   ],
   "patch_sensitive_paths": [
     "frigate/api/fastapi_app.py",

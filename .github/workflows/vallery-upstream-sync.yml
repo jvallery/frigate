@@ -59,15 +59,29 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/upstream-evidence"
+          # The mirror set comes from the reviewed policy; every entry must be a branch
+          # that exists upstream, or the fetch fails closed.
+          mapfile -t branches < <(jq -er '.mirror_branches[]' .vallery/upstream-policy.json)
+          (( ${#branches[@]} > 0 ))
+          upstream_refspecs=()
+          for branch in "${branches[@]}"; do
+            [[ "${branch}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+            upstream_refspecs+=("+refs/heads/${branch}:refs/remotes/upstream/${branch}")
+          done
           git remote remove upstream 2>/dev/null || true
           git remote add upstream "${UPSTREAM_URL}"
-          git fetch --no-tags upstream \
-            +refs/heads/dev:refs/remotes/upstream/dev \
-            +refs/heads/0.19:refs/remotes/upstream/0.19
+          git fetch --no-tags upstream "${upstream_refspecs[@]}"
           git fetch --no-tags origin \
-            +refs/heads/dev:refs/remotes/origin/dev \
-            +refs/heads/0.19:refs/remotes/origin/0.19 \
             +refs/heads/vallery/prod:refs/remotes/origin/vallery/prod
+          for branch in "${branches[@]}"; do
+            # A mirror added to the policy does not exist in the fork yet; the next
+            # step bootstraps it from the reviewed patch-ledger base.
+            if git ls-remote --exit-code --heads origin "refs/heads/${branch}" >/dev/null; then
+              git fetch --no-tags origin \
+                "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+            fi
+          done
+          echo "MIRROR_BRANCHES=${branches[*]}" >> "${GITHUB_ENV}"
 
       - name: Classify, attest, and advance fast-forward mirrors
         id: mirrors
@@ -77,20 +91,59 @@ jobs:
           MIRROR_KNOWN_HOSTS: ${{ steps.mirror-key.outputs.known_hosts }}
         run: |
           set -euo pipefail
-          moved_dev=""
-          for branch in dev 0.19; do
-            old_sha="$(git rev-parse "refs/remotes/origin/${branch}")"
-            new_sha="$(git rev-parse "refs/remotes/upstream/${branch}")"
+          # Intake follows the upstream line vallery/prod is based on (the ledger's
+          # selected branch), which is processed first so a later mirror's failure
+          # cannot block it; the other mirrors are tracked for visibility only.
+          selected_branch="$(jq -er .selected_upstream.branch .vallery/downstream-patches.json)"
+          ledger_base="$(jq -er .selected_upstream.sha .vallery/downstream-patches.json)"
+          [[ "${ledger_base}" =~ ^[0-9a-f]{40}$ ]]
+          [[ " ${MIRROR_BRANCHES} " == *" ${selected_branch} "* ]]
+          ordered=("${selected_branch}")
+          for branch in ${MIRROR_BRANCHES}; do
+            [[ "${branch}" == "${selected_branch}" ]] || ordered+=("${branch}")
+          done
+          for branch in "${ordered[@]}"; do
+            upstream_tip="$(git rev-parse "refs/remotes/upstream/${branch}")"
+            [[ "${upstream_tip}" =~ ^[0-9a-f]{40}$ ]]
+            if old_sha="$(git rev-parse --verify --quiet "refs/remotes/origin/${branch}")"; then
+              mirror_state="existing"
+            else
+              old_sha="${ledger_base}"
+              mirror_state="bootstrap-from-ledger-base"
+            fi
             [[ "${old_sha}" =~ ^[0-9a-f]{40}$ ]]
-            [[ "${new_sha}" =~ ^[0-9a-f]{40}$ ]]
-
             evidence="${RUNNER_TEMP}/upstream-evidence/${branch//./-}.json"
-            if [[ "${old_sha}" == "${new_sha}" ]]; then
+
+            # Upstream CI skips docs-only pushes and can stay red for days, so a mirror
+            # advances to the newest upstream commit with a successful CI run and never
+            # past it. When no newer commit has one, the mirror holds; that is not a
+            # failure.
+            verified_ci="${RUNNER_TEMP}/upstream-evidence/${branch//./-}-successful-ci.txt"
+            gh api --method GET "repos/${UPSTREAM_REPOSITORY}/actions/workflows/ci.yml/runs" \
+              -f branch="${branch}" -f status=success -f per_page=100 \
+              --jq '.workflow_runs[] | select(.name == "CI" and .conclusion == "success") | .head_sha' \
+              | sort -u > "${verified_ci}"
+            new_sha=""
+            while read -r candidate; do
+              if grep -qxF "${candidate}" "${verified_ci}"; then
+                new_sha="${candidate}"
+                break
+              fi
+            done < <(git rev-list --first-parent "${upstream_tip}" "^${old_sha}")
+
+            if [[ -z "${new_sha}" ]]; then
+              state="already-current"
+              if [[ "${old_sha}" != "${upstream_tip}" ]]; then
+                state="held-awaiting-upstream-ci"
+                echo "::notice::upstream ${branch}@${upstream_tip} has no newer commit with a successful upstream CI run; the ${branch} mirror holds at ${old_sha}"
+              fi
               jq -n \
                 --arg branch "${branch}" \
+                --arg mirror_state "${mirror_state}" \
                 --arg old_sha "${old_sha}" \
-                --arg new_sha "${new_sha}" \
-                '{schema_version:1, branch:$branch, old_sha:$old_sha, new_sha:$new_sha, state:"already-current"}' \
+                --arg upstream_tip "${upstream_tip}" \
+                --arg state "${state}" \
+                '{schema_version:1, branch:$branch, mirror_state:$mirror_state, old_sha:$old_sha, new_sha:$old_sha, upstream_tip:$upstream_tip, state:$state}' \
                 > "${evidence}"
               continue
             fi
@@ -105,14 +158,6 @@ jobs:
               --head "${new_sha}" \
               --output "${classification}"
 
-            ci_success="$(gh api --method GET "repos/${UPSTREAM_REPOSITORY}/actions/runs" \
-              -f head_sha="${new_sha}" -f branch="${branch}" -f status=completed -f per_page=100 \
-              --jq '[.workflow_runs[] | select(.name == "CI") | .conclusion] | any(. == "success")')"
-            if [[ "${ci_success}" != "true" ]]; then
-              echo "::error::upstream ${branch}@${new_sha} has no successful completed CI run"
-              exit 21
-            fi
-
             short_sha="${new_sha:0:7}"
             registry_token="$(curl --fail --silent --show-error \
               "https://ghcr.io/token?scope=repository:blakeblackshear/frigate:pull" | jq -r .token)"
@@ -126,10 +171,12 @@ jobs:
 
             jq -n \
               --arg branch "${branch}" \
+              --arg mirror_state "${mirror_state}" \
               --arg old_sha "${old_sha}" \
               --arg new_sha "${new_sha}" \
+              --arg upstream_tip "${upstream_tip}" \
               --argjson classification "$(<"${classification}")" \
-              '{schema_version:1, branch:$branch, old_sha:$old_sha, new_sha:$new_sha, state:"verified-fast-forward", upstream_ci:"success", required_artifacts:[($new_sha[0:7]), (($new_sha[0:7]) + "-tensorrt")], classification:$classification}' \
+              '{schema_version:1, branch:$branch, mirror_state:$mirror_state, old_sha:$old_sha, new_sha:$new_sha, upstream_tip:$upstream_tip, state:"verified-fast-forward", upstream_ci:"success", required_artifacts:[($new_sha[0:7]), (($new_sha[0:7]) + "-tensorrt")], classification:$classification}' \
               > "${evidence}"
 
             if [[ "${DRY_RUN}" == "true" ]]; then
@@ -138,37 +185,51 @@ jobs:
 
             GIT_SSH_COMMAND="ssh -i ${MIRROR_KEY_PATH} -o IdentitiesOnly=yes -o UserKnownHostsFile=${MIRROR_KNOWN_HOSTS} -o StrictHostKeyChecking=yes" \
               git push git@github.com:jvallery/frigate.git "${new_sha}:refs/heads/${branch}"
-            gh workflow run vallery-integration.yml \
-              --repo "${GITHUB_REPOSITORY}" \
-              --ref vallery/prod \
-              -f source_sha="${new_sha}" \
-              -f source_branch="${branch}" \
-              -f upstream_sha="${new_sha}"
-            if [[ "${branch}" == "dev" ]]; then
-              moved_dev="${new_sha}"
-              echo "moved_dev=${moved_dev}" >> "${GITHUB_OUTPUT}"
+            if [[ "${branch}" == "${selected_branch}" ]]; then
+              echo "intake_sha=${new_sha}" >> "${GITHUB_OUTPUT}"
+              echo "intake_branch=${branch}" >> "${GITHUB_OUTPUT}"
             fi
           done
-          echo "moved_dev=${moved_dev}" >> "${GITHUB_OUTPUT}"
 
       - name: Create one reviewed upstream intake PR
-        if: always() && steps.mirrors.outputs.moved_dev != '' && inputs.dry_run != true
+        if: always() && steps.mirrors.outputs.intake_sha != '' && inputs.dry_run != true
         env:
-          UPSTREAM_SHA: ${{ steps.mirrors.outputs.moved_dev }}
+          UPSTREAM_SHA: ${{ steps.mirrors.outputs.intake_sha }}
+          UPSTREAM_BRANCH: ${{ steps.mirrors.outputs.intake_branch }}
           MIRROR_KEY_PATH: ${{ steps.mirror-key.outputs.key_path }}
           MIRROR_KNOWN_HOSTS: ${{ steps.mirror-key.outputs.known_hosts }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           [[ "${UPSTREAM_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${UPSTREAM_BRANCH}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
           intake_branch="automation/intake-${UPSTREAM_SHA:0:12}"
+          conflict_title="[automation] Frigate upstream intake needs conflict resolution"
+          conflict_issue="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --search "${conflict_title} in:title" --json number,title --jq ".[] | select(.title == \"${conflict_title}\") | .number" | head -1)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch --force-create "${intake_branch}" refs/remotes/origin/vallery/prod
           if ! git merge --no-ff --no-edit "${UPSTREAM_SHA}"; then
+            conflicts="$(git diff --name-only --diff-filter=U | sed 's/^/- /')"
             git merge --abort
-            echo "::error::upstream intake conflicts with vallery/prod"
-            exit 22
+            # Fail closed: nothing is pushed and no intake PR opens. A conflicting
+            # merge is work for a person, not a controller failure, so it is reported
+            # once per upstream SHA in its own issue and the verified mirror stands.
+            body="$(printf '%s\n' \
+              "Upstream ${UPSTREAM_BRANCH}@${UPSTREAM_SHA} is mirrored and verified, but merging it into vallery/prod conflicts in:" \
+              "" \
+              "${conflicts}" \
+              "" \
+              "Nothing was pushed and no intake PR was opened. Resolve on a branch from vallery/prod that merges ${UPSTREAM_SHA} (keep this repository's AGENTS.md and leave CLAUDE.md deleted), then open the intake PR from the PR template. Evidence: ${RUN_URL}")"
+            if [[ -z "${conflict_issue}" ]]; then
+              gh issue create --repo "${GITHUB_REPOSITORY}" --title "${conflict_title}" --body "${body}"
+            elif [[ "$(gh issue view "${conflict_issue}" --repo "${GITHUB_REPOSITORY}" --json body,comments --jq "[.body, .comments[].body] | any(contains(\"${UPSTREAM_SHA}\"))")" != "true" ]]; then
+              gh issue comment "${conflict_issue}" --repo "${GITHUB_REPOSITORY}" --body "${body}"
+            fi
+            echo "::warning::upstream intake ${UPSTREAM_BRANCH}@${UPSTREAM_SHA} conflicts with vallery/prod; reported in the intake conflict issue"
+            exit 0
           fi
+          intake_head="$(git rev-parse HEAD)"
           GIT_SSH_COMMAND="ssh -i ${MIRROR_KEY_PATH} -o IdentitiesOnly=yes -o UserKnownHostsFile=${MIRROR_KNOWN_HOSTS} -o StrictHostKeyChecking=yes" \
             git push --set-upstream git@github.com:jvallery/frigate.git "${intake_branch}"
 
@@ -185,8 +246,20 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --base vallery/prod \
               --head "${intake_branch}" \
-              --title "chore(upstream): intake dev@${UPSTREAM_SHA:0:12}" \
-              --body "Exact fast-forward upstream dev intake for \`${UPSTREAM_SHA}\`. Mirror movement, upstream CI, required GHCR artifacts, and changed-path classification passed before this PR was created. Merge remains gated by upstream-parity and Vallery integration checks."
+              --title "chore(upstream): intake ${UPSTREAM_BRANCH}@${UPSTREAM_SHA:0:12}" \
+              --body "Exact fast-forward upstream ${UPSTREAM_BRANCH} intake for \`${UPSTREAM_SHA}\`. Mirror movement, upstream CI, required GHCR artifacts, and changed-path classification passed before this PR was created. Merge remains gated by upstream-parity and Vallery integration checks."
+          fi
+          # The integration contract runs on the intake merge commit, which carries
+          # this repository's contract scripts; a raw upstream commit does not.
+          gh workflow run vallery-integration.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref vallery/prod \
+            -f source_sha="${intake_head}" \
+            -f source_branch="${UPSTREAM_BRANCH}" \
+            -f upstream_sha="${UPSTREAM_SHA}"
+          if [[ -n "${conflict_issue}" ]]; then
+            gh issue close "${conflict_issue}" --repo "${GITHUB_REPOSITORY}" \
+              --comment "Superseded: upstream ${UPSTREAM_BRANCH}@${UPSTREAM_SHA} merged cleanly into intake branch ${intake_branch}. ${RUN_URL}"
           fi
 
       - name: Upload immutable sync evidence

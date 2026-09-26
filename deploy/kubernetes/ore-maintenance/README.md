@@ -1,5 +1,13 @@
 # Preserved development state during Ore maintenance
 
+> **Historical.** This protocol was prepared for the 2026-09-05 Ore maintenance
+> handoff, which is over. It does not describe current state: development is
+> parked at zero replicas (see `../local-dev/README.md`), no maintenance
+> snapshot is provisioned, and the `frigate-dev-cpu` label is back on its
+> original worker. The overlay stays dormant for reference and its tests still
+> run in `.github/workflows/vallery-integration.yml`; do not activate it.
+> Removing the overlay removes that CI step in the same change.
+
 This optional overlay retains the exact current Frigate image and bounded
 emptyDir volumes. It adds an init container that restores config, SQLite data
 and media from the private immutable Secret
@@ -27,9 +35,10 @@ stopped. The baseline online SQLite backup is intentionally insufficient.
 
 Provision the immutable snapshot Secret before changing the owning Argo
 Application path to this overlay. Preserve the previous Application source,
-Pod identity and source-owned node label inverse. The private Proxmox placement
-source temporarily selects the off-Ore CPU worker through the unchanged
-frigate-dev-cpu label. Do not alter production placement or camera credentials.
+Pod identity and source-owned node label inverse. During the 2026-09-05
+handoff, the Proxmox placement source (`jvallery/proxmox-infrastructure`)
+temporarily selected the off-Ore CPU worker through the unchanged
+frigate-dev-cpu label; the label has since returned to its original worker. Do not alter production placement or camera credentials.
 No source acceptance alone is a live migration or continuity receipt.
 
 After rollout, verify the actual init receipt, private config/authentication
