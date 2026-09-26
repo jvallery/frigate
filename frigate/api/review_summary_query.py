@@ -34,12 +34,14 @@ def _review_clauses(
     if labels != "all":
         label_clauses = []
         for label in labels.split(","):
-            object_match = review_model.data["objects"].cast("text") % f'*"{label}"*'
+            # Verified objects are stored as `<label>-verified`; match them too,
+            # as the /review endpoint's label filter does.
+            label_match = (
+                review_model.data["objects"].cast("text") % f'*"{label}"*'
+            ) | (review_model.data["objects"].cast("text") % f'*"{label}-verified"*')
             if include_audio_labels:
-                audio_match = review_model.data["audio"].cast("text") % f'*"{label}"*'
-                label_clauses.append(object_match | audio_match)
-            else:
-                label_clauses.append(object_match)
+                label_match |= review_model.data["audio"].cast("text") % f'*"{label}"*'
+            label_clauses.append(label_match)
         clauses.append(reduce(operator.or_, label_clauses))
 
     if include_zones and zones != "all":
