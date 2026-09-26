@@ -18,19 +18,21 @@ configuration as the placeholder. There is no HPA or CronJob in this namespace.
 Resuming development requires an explicit source change to both the replica
 count and validator. The development hostname has no backend while parked.
 
-## Private platform contract
+## Platform contract
 
-The private platform repository supplies, without granting this public tree
-ownership of them:
+The platform repositories supply these, without granting this public tree
+ownership of them. `jvallery/agents` owns:
 
 - namespace `frigate-dev`;
 - AppProject `repo-pod-jvallery-frigate` and Application `frigate-local-dev`;
 - pull Secret `frigate-dev-zot-pull` with read-only access to the Frigate image;
 - Secret `frigate-dev-secrets` with exactly these keys:
   `FRIGATE_CAMERA_HOST`, `FRIGATE_CAMERA_USER`, and
-  `FRIGATE_CAMERA_PASSWORD`;
-- the node label `agentfleet.vallery.net/frigate-dev-cpu=true` on the selected
-  non-GPU development worker.
+  `FRIGATE_CAMERA_PASSWORD`.
+
+`jvallery/proxmox-infrastructure` owns the node label
+`agentfleet.vallery.net/frigate-dev-cpu=true` on the selected non-GPU
+development worker; this tree only selects on it.
 
 The Deployment maps the three camera keys individually. It never uses
 `envFrom`. `FRIGATE_CAMERA_HOST` is the host, optional port, and stream-path
@@ -46,19 +48,19 @@ read-only pull Secret even when the digest is unchanged. The Pod mounts only
 bounded `emptyDir` volumes, so configuration, database, media, and generated
 bootstrap state disappear with the Pod lifecycle.
 
-## Private network and route contract
+## Network and route contract
 
-Private network policy selects only
-`app.kubernetes.io/name=frigate-dev` in namespace `frigate-dev`. The private
-policy owner supplies default deny plus the narrowly selected DNS, camera, and
-Traefik allowances. It also allows only Prometheus Pods labeled
+`jvallery/network-infra` owns the NetworkPolicies in `frigate-dev`, DNS, and the
+Traefik middlewares the Ingress references. Its policy selects only
+`app.kubernetes.io/name=frigate-dev` in namespace `frigate-dev` and supplies
+default deny plus the narrowly selected DNS, camera, and Traefik allowances. It also allows only Prometheus Pods labeled
 `app.kubernetes.io/name=prometheus` in namespace `observability` to reach TCP
 port `5000`. Camera address ranges cannot be expressed safely in this public
 repository, so this tree does not render a NetworkPolicy.
 
 Service `frigate-dev` exposes TCP port `8971` as `external`. `ingress.yaml` is
-the sole route for `cameras-dev.vallery.net` and uses the private platform's
-fixed Traefik and Authentik middleware chain. It entered the base only after
+the sole route for `cameras-dev.vallery.net` and uses the fixed Traefik and
+Authentik middleware chain from `jvallery/network-infra`. It entered the base only after
 the previous route and Sentinel Application were absent through their normal
 Argo ownership paths. There must never be two active routers for the
 development hostname.

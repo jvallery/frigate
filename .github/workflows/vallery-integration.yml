@@ -16,7 +16,7 @@ on:
         type: choice
         options:
           - dev
-          - 0.19
+          - master
       upstream_sha:
         description: Full 40-character upstream source SHA
         required: true
@@ -59,7 +59,7 @@ jobs:
         run: |
           python3 -m json.tool .vallery/upstream-policy.json >/dev/null
           test "$(jq -r .upstream_repository .vallery/upstream-policy.json)" = "blakeblackshear/frigate"
-          test "$(jq -r '.mirror_branches | join(",")' .vallery/upstream-policy.json)" = "dev,0.19"
+          test "$(jq -r '.mirror_branches | join(",")' .vallery/upstream-policy.json)" = "dev,master"
       - name: Verify downstream patch ledger freshness
         run: |
           python3 .github/scripts/test_verify_downstream_patch_ledger.py
@@ -83,6 +83,9 @@ jobs:
           python3 -m pip install --disable-pip-version-check --quiet pyyaml==6.0.3
           python3 .github/scripts/validate_local_dev_runtime.py
           python3 .github/scripts/test_local_dev_runtime.py
+          # ore-maintenance is a historical, dormant overlay (see its README); it is
+          # tested here only so it cannot rot while it is retained. Removing the
+          # overlay removes these two lines in the same change.
           python3 -m unittest discover -s deploy/kubernetes/ore-maintenance -p 'test_*.py'
           kubectl kustomize deploy/kubernetes/ore-maintenance >/dev/null
       - name: Verify protected release and artifact contracts

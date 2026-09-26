@@ -39,7 +39,9 @@ jobs:
         run: |
           set -euo pipefail
           branch="$(jq -er .selected_upstream.branch .vallery/downstream-patches.json)"
-          case "${branch}" in dev|0.19) ;; *) exit 31 ;; esac
+          # The selected branch must be one of the reviewed upstream mirrors.
+          jq -e --arg branch "${branch}" '.mirror_branches | index($branch) != null' \
+            .vallery/upstream-policy.json >/dev/null || exit 31
           git remote remove upstream 2>/dev/null || true
           git remote add upstream "${UPSTREAM_URL}"
           git fetch --no-tags upstream \

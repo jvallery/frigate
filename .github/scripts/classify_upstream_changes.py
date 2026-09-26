@@ -76,7 +76,9 @@ def classify_path(path: str, patch_sensitive: list[str]) -> set[str]:
         categories.add("source")
     if path.startswith(("web/public/", "docker/main/rootfs/")):
         categories.add("asset")
-    if path in ROOT_METADATA or path.startswith(("scripts/", "docker-compose", "web/")):
+    if path in ROOT_METADATA or path.startswith(
+        (".cspell/", "scripts/", "docker-compose", "web/")
+    ):
         categories.add("project-metadata")
 
     return categories

@@ -53,7 +53,7 @@ def validate(repo: Path, source_sha: str, upstream_sha: str, release_id: str) ->
     selected = ledger.get("selected_upstream") or {}
     if selected.get("repository") != "blakeblackshear/frigate":
         fail("patch ledger selects an unexpected upstream repository")
-    if selected.get("branch") not in {"dev", "0.19"}:
+    if selected.get("branch") not in {"dev", "master"}:
         fail("patch ledger selects an unapproved upstream branch")
     if selected.get("sha") != upstream_sha:
         fail("requested upstream SHA does not equal the reviewed patch-ledger base")

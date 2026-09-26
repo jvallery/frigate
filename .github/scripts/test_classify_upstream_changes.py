@@ -33,6 +33,15 @@ class ClassifyUpstreamChangesTest(unittest.TestCase):
         self.assertIn("patch-sensitive", report["risk_categories"])
         self.assertIn("frigate/api/review.py", report["categories"]["source"])
 
+    def test_spelling_dictionary_is_project_metadata(self) -> None:
+        report = MODULE.build_report(
+            [".cspell/frigate-dictionary.txt"], [], "a" * 40, "b" * 40
+        )
+        self.assertTrue(report["safe_to_dispatch"])
+        self.assertEqual(
+            report["categories"]["project-metadata"], [".cspell/frigate-dictionary.txt"]
+        )
+
     def test_unknown_path_fails_closed(self) -> None:
         report = MODULE.build_report(["unexpected.binary"], [], "a" * 40, "b" * 40)
         self.assertFalse(report["safe_to_dispatch"])

@@ -153,7 +153,7 @@ def main() -> None:
     parser.add_argument("--release-id", required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--upstream-sha", required=True)
-    parser.add_argument("--upstream-branch", choices=("dev", "0.19"), required=True)
+    parser.add_argument("--upstream-branch", choices=("dev", "master"), required=True)
     parser.add_argument("--standard-digest", required=True)
     parser.add_argument("--tensorrt-digest", required=True)
     parser.add_argument("--source-date-epoch", type=int, required=True)
