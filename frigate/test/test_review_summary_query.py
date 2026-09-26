@@ -149,6 +149,31 @@ class ReviewSummaryTest(unittest.TestCase):
         self.assertEqual(1, result["1970-01-02"]["total_alert"])
         self.assertNotIn("1970-01-10", result)
 
+    def test_label_filter_matches_verified_objects_only(self) -> None:
+        day = review_summary_query.DAY_SECONDS
+        for review_id, start, objects, audio in (
+            ("old-verified", day + 400, ["person-verified"], []),
+            ("new-verified", 10 * day + 250, ["person-verified"], []),
+            ("new-prefix", 10 * day + 260, ["personal"], []),
+            ("new-audio", 10 * day + 270, [], ["person"]),
+        ):
+            ReviewSegment.create(
+                id=review_id,
+                camera="front",
+                start_time=start,
+                end_time=start + 30,
+                severity="alert",
+                data={"objects": objects, "audio": audio, "zones": ["porch"]},
+            )
+
+        result = self.query(labels="person")
+
+        # The last-24-hour card matches objects, verified objects, and audio.
+        self.assertEqual(3, result["last24Hours"]["total_alert"])
+        # Daily totals match objects and verified objects, but not audio.
+        self.assertEqual(2, result["1970-01-02"]["total_alert"])
+        self.assertEqual(2, result["1970-01-11"]["total_alert"])
+
     def test_empty_requested_camera_intersection_returns_empty(self) -> None:
         self.assertEqual({}, self.query(cameras="private"))
 

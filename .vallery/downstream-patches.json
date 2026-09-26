@@ -4,7 +4,7 @@
   "selected_upstream": {
     "repository": "blakeblackshear/frigate",
     "branch": "master",
-    "sha": "77a66e75c61862b048a07c1295877f4b31343504"
+    "sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70"
   },
   "first_candidate_release": "v0.18.0-vallery.20260820.1",
   "downstream_deletions": [
@@ -22,7 +22,7 @@
       "title": "SQLite query indexes and planner statistics",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "18d32ca641c29c414fc70a46281691013b5bb22c",
@@ -56,7 +56,7 @@
       "title": "WAL-safe migration backup",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "3384b2fe053269e4c9ffdc5c8922c9d26f7038ac",
@@ -87,7 +87,7 @@
       "title": "Bounded Explore event queries",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "8152125f74690b2dbc7c960e63fe2ac11493196b",
@@ -118,7 +118,7 @@
       "title": "Bounded recording-day summaries",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "a86710bb5f5115c56f3d659d440a0f1a07cbd2ad",
@@ -149,11 +149,15 @@
       "title": "Bounded Review summary joins",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "5e8a5f792c983baf164ba85a7b5e0840a61563c2",
           "patch_id": "bb7d06ead1fe7dfb4c77220f1ac5f5c40e78ab96"
+        },
+        {
+          "sha": "7c54322a60e76e8b024eb5d0454535f9f9978442",
+          "patch_id": "7e935188f295affb6986061ead692446f878d73e"
         }
       ],
       "disposition": "upstreamable",
@@ -180,7 +184,7 @@
       "title": "Serialized metrics collector snapshots",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "6efce7d8faed5ba1a1af6ad5b89188dfad65903e",
@@ -212,7 +216,7 @@
       "title": "Bounded Chat and provider image inputs",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "d03ce394a1adce4525614ca8506d71810aebaed0",
@@ -244,7 +248,7 @@
       "title": "Bounded and recoverable GenAI description work",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "acb6138502d6fb384d7dc4f341ab5ef842bb258e",
@@ -287,7 +291,7 @@
       "title": "Serialized bounded ArcFace CUDA recovery",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "683790a5ba472dd0b858365a6ff651899727f1ff",
@@ -320,7 +324,7 @@
       "title": "Production migration-history compatibility marker",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "7176bece6e974782f92964395a242f2d71e9f34c",
@@ -350,7 +354,7 @@
       "title": "Fail closed on unauthenticated camera-filter requests",
       "owner": "jvallery",
       "status": "candidate",
-      "upstream_base_sha": "77a66e75c61862b048a07c1295877f4b31343504",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
       "local_commits": [
         {
           "sha": "436fa042159883cd251754744314c9345afa57a5",
