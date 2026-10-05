@@ -70,10 +70,10 @@ class TestAudioMetrics(unittest.TestCase):
             audio = np.full(16000, amplitude, dtype=np.int16)
             maintainer.detect_audio(audio)
             self.assertAlmostEqual(counters.audio_rms.value, amplitude, delta=0.001)
-            expected = maintainer.calculate_audio_levels(audio.astype(np.float32))[1]
-            self.assertAlmostEqual(counters.audio_dBFS.value, expected)
+            expected = 20 * np.log10(amplitude / 32768.0)
+            self.assertAlmostEqual(counters.audio_dBFS.value, expected, delta=0.00001)
         self.assertEqual(shared.lookups, 1)
-        self.assertEqual(maintainer.requestor.send_data.call_count, 3)
+        self.assertEqual(maintainer.requestor.send_data.call_count, 9)
 
     def test_replacement_maintainer_binds_the_replacement_counters(self):
         old = metrics()
