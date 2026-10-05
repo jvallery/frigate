@@ -480,6 +480,37 @@
         "pull_request": null
       },
       "retirement_condition": "Retire when upstream retains audio counter proxies per camera maintainer rather than reloading the full shared metric bundle for each chunk."
+    },
+    {
+      "id": "VLY-FRIGATE-015",
+      "concern": "clipped_face_crop_quality",
+      "title": "Enforce face minimum on usable crop pixels",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
+      "local_commits": [
+        {
+          "sha": "4431c568d285e055398a777bfa4391a7f5df2475",
+          "patch_id": "ccc16d9764c47f81b5cbdcab90fdbf5bb46d3749"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "frigate/data_processing/real_time/face.py",
+        "frigate/test/test_face_crop_area.py"
+      ],
+      "tests": [
+        "frigate/test/test_face_crop_area.py"
+      ],
+      "first_release": "v0.18.0-vallery.20261005.3",
+      "migration_class": "none",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire when upstream checks the actual face crop area after clipping in both YuNet and face-attribute paths."
     }
   ]
 }
