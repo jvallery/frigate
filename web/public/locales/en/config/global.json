@@ -186,6 +186,19 @@
   "proxy": {
     "label": "Proxy",
     "description": "Settings for integrating Frigate behind a reverse proxy that passes authenticated user headers.",
+    "jwt": {
+      "label": "Signed proxy identity",
+      "description": "Validate X-Authentik-JWT with RS256 and pinned issuer, audience, and HTTPS signing keys. Native authentication remains enabled for integrations.",
+      "issuer": {
+        "label": "Trusted token issuer"
+      },
+      "audience": {
+        "label": "Application client ID"
+      },
+      "jwks_url": {
+        "label": "HTTPS signing keys URL"
+      }
+    },
     "header_map": {
       "label": "Header mapping",
       "description": "Map incoming proxy headers to Frigate user and role fields for proxy-based auth.",
@@ -1371,6 +1384,10 @@
     "recognition_threshold": {
       "label": "Recognition threshold",
       "description": "Face embedding distance threshold to consider two faces a match."
+    },
+    "min_sample_margin": {
+      "label": "Minimum sample margin",
+      "description": "For the large face model, require this cosine similarity lead between the nearest training samples of different identities. Zero disables the guard. Higher values reject more ambiguous faces and reduce recognition coverage."
     },
     "min_area": {
       "label": "Minimum face area",

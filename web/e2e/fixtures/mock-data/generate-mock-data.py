@@ -47,7 +47,7 @@ def check_pydantic_fields(pydantic_class, mock_keys, model_name):
             file=sys.stderr,
         )
         print(
-            f"  Add these fields to the mock data in this script.",
+            "  Add these fields to the mock data in this script.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -67,12 +67,14 @@ def generate_config():
         json.dumps(
             {
                 "mqtt": {"host": "mqtt"},
+                # Preserve the synthetic decoder preset without probing host hardware.
+                "ffmpeg": {"hwaccel_args": "preset-vaapi"},
                 "cameras": {
                     cam: {
                         "ffmpeg": {
                             "inputs": [
                                 {
-                                    "path": f"rtsp://10.0.0.{i+1}:554/video",
+                                    "path": f"rtsp://10.0.0.{i + 1}:554/video",
                                     "roles": ["detect"],
                                 }
                             ]
@@ -209,9 +211,7 @@ def generate_reviews():
     result = [r.model_dump(mode="json") for r in reviews]
 
     # Verify mock data covers all Pydantic response model fields
-    check_pydantic_fields(
-        ReviewSegmentResponse, set(result[0].keys()), "ReviewSegment"
-    )
+    check_pydantic_fields(ReviewSegmentResponse, set(result[0].keys()), "ReviewSegment")
 
     return result
 

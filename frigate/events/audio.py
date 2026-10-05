@@ -145,13 +145,21 @@ class AudioProcessor(FrigateProcess):
             # ffmpeg update may not have arrived yet; wait for next poll
             if not any("audio" in i.roles for i in camera.ffmpeg.inputs):
                 return
-            thread = AudioEventMaintainer(
-                camera,
-                self.config,
-                self.camera_metrics,
-                self.transcription_model_runner,
-                self.stop_event,  # type: ignore[arg-type]
-            )
+            try:
+                thread = AudioEventMaintainer(
+                    camera,
+                    self.config,
+                    self.camera_metrics,
+                    self.transcription_model_runner,
+                    self.stop_event,  # type: ignore[arg-type]
+                )
+            except KeyError as error:
+                # CameraMaintainer can receive a runtime add after this process.
+                # Only the missing camera bundle is retryable; preserve other errors.
+                if error.args != (name,):
+                    raise
+                self.logger.debug("Waiting for camera metrics before starting audio")
+                return
             self.audio_threads[name] = thread
             thread.start()
             self.logger.info(f"Audio maintainer started for {name}")
@@ -205,7 +213,9 @@ class AudioEventMaintainer(threading.Thread):
 
         self.config = config
         self.camera_config = camera
-        self.camera_metrics = camera_metrics
+        # A maintainer owns one camera for its lifetime. Retain its metric
+        # handles instead of reconstructing every proxy on each audio chunk.
+        self.metrics = camera_metrics[self.camera_config.name]
         self.stop_event = stop_event
         # per-camera stop signal so a single maintainer can be torn down at
         # runtime (e.g. on camera removal) without stopping the whole process
@@ -244,7 +254,7 @@ class AudioEventMaintainer(threading.Thread):
                 camera_config=self.camera_config,
                 requestor=self.requestor,
                 model_runner=self.audio_transcription_model_runner,
-                metrics=self.camera_metrics[self.camera_config.name],
+                metrics=self.metrics,
                 stop_event=self.stop_event,
             )
 
@@ -269,8 +279,8 @@ class AudioEventMaintainer(threading.Thread):
         audio_as_float: np.ndarray = audio.astype(np.float32)
         rms, dBFS = self.calculate_audio_levels(audio_as_float)
 
-        self.camera_metrics[self.camera_config.name].audio_rms.value = rms
-        self.camera_metrics[self.camera_config.name].audio_dBFS.value = dBFS
+        self.metrics.audio_rms.value = rms
+        self.metrics.audio_dBFS.value = dBFS
 
         audio_detections: list[tuple[str, float]] = []
 

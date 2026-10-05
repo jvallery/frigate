@@ -222,7 +222,12 @@ class FaceRealTimeProcessor(RealTimeProcessorApi):
 
         face: dict[str, Any] | None = None
 
-        if self.requires_face_detection:
+        # A face label tracked elsewhere must not disable YuNet on this camera.
+        # Also retain a fallback when the object detector misses a face attribute.
+        if self.requires_face_detection or not any(
+            attr.get("label") == "face"
+            for attr in (obj_data.get("current_attributes") or [])
+        ):
             logger.debug("Running manual face detection.")
             person_box = obj_data.get("box")
 
@@ -291,6 +296,15 @@ class FaceRealTimeProcessor(RealTimeProcessorApi):
 
         if face_frame.size == 0:
             logger.debug(f"Empty face crop for {id}")
+            return
+
+        # A detector box may extend beyond the person or image boundary. The
+        # pixels actually available for recognition must satisfy the quality floor.
+        if (
+            face_frame.shape[0] * face_frame.shape[1]
+            < self.config.cameras[camera].face_recognition.min_area
+        ):
+            logger.debug("Ignoring face crop below min_area after clipping")
             return
 
         res = self.recognizer.classify(face_frame)
