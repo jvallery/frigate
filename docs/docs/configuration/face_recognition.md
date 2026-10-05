@@ -114,6 +114,8 @@ Navigate to <NavPath path="Settings > Enrichments > Face recognition" />.
   - Default: `0.8`
 - **Recognition threshold**: Recognition confidence score required to add the face to the object as a sub label.
   - Default: `0.9`
+- **Minimum sample margin**: For the `large` model, reject a match when training samples from different people are too similar to the detected face. Higher values return more unknown faces and reduce recognition coverage.
+  - Default: `0.0` (disabled)
 - **Minimum faces**: Min face recognitions for the sub label to be applied to the person object.
   - Default: `1`
 - **Save attempts**: Number of images of recognized faces to save for training.
@@ -132,6 +134,7 @@ face_recognition:
   model_size: small
   unknown_score: 0.8
   recognition_threshold: 0.9
+  min_sample_margin: 0.0
   min_faces: 1
   save_attempts: 200
   blur_confidence_filter: true
@@ -140,6 +143,21 @@ face_recognition:
 
 </TabItem>
 </ConfigTabs>
+
+The optional `min_sample_margin` guard supplements the recognition threshold for
+ArcFace (`model_size: large`). A class-mean confidence can be high even when
+individual training samples from different identities closely match a partial or
+side view. The guard compares the nearest sample from each identity using raw
+cosine similarity. If the best lead over another identity is smaller than the
+configured margin, the attempt is recorded as unknown and cannot establish a
+recognized person label. Existing labels are not cleared by this guard.
+
+Zero preserves the existing matcher. For example, `min_sample_margin: 0.05`
+requires a 0.05 cosine lead; this is not a probability or a universal recommended
+value. Check both confirmed correct and incorrect events before increasing it,
+because stronger margins also reject some correct recognitions. With only one
+trained identity, the existing confidence thresholds still govern the match.
+The `small` model does not use this guard.
 
 ## Usage
 

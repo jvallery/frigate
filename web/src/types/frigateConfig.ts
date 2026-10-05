@@ -25,6 +25,7 @@ export interface FaceRecognitionConfig {
   unknown_score: number;
   detection_threshold: number;
   recognition_threshold: number;
+  min_sample_margin: number;
 }
 
 export type SearchModel = "jinav1" | "jinav2";

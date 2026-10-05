@@ -283,6 +283,13 @@ class FaceRecognitionConfig(FrigateBaseModel):
         gt=0.0,
         le=1.0,
     )
+    min_sample_margin: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=2.0,
+        title="Minimum sample margin",
+        description="For the large face model, require this cosine similarity lead between the nearest training samples of different identities. Zero disables the guard. Higher values reject more ambiguous faces and reduce recognition coverage.",
+    )
     min_area: int = Field(
         default=750,
         title="Minimum face area",

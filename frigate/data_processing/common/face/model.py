@@ -189,6 +189,40 @@ def build_class_mean(
     return np.asarray(stats.trim_mean(arr[keep], trim, axis=0))
 
 
+def normalize_face_samples(embs: list[np.ndarray]) -> np.ndarray:
+    """Retain finite, nonzero reference vectors normalized for cosine scoring."""
+    samples = np.stack(embs).astype(np.float32, copy=False)
+    norms = np.linalg.norm(samples, axis=1, keepdims=True)
+    valid = (
+        np.isfinite(samples).all(axis=1) & np.isfinite(norms[:, 0]) & (norms[:, 0] > 0)
+    )
+    return np.asarray(samples[valid] / norms[valid])
+
+
+def nearest_sample_margin(
+    embedding: np.ndarray, normalized_samples: dict[str, np.ndarray]
+) -> float:
+    """Compare the best reference sample from each identity, rather than centroids."""
+    norm = np.linalg.norm(embedding)
+    if not np.isfinite(norm) or norm <= 0:
+        return 0.0
+
+    query = embedding / norm
+    scores = sorted(
+        (
+            float(np.max(np.einsum("ij,j->i", samples, query)))
+            for samples in normalized_samples.values()
+            if len(samples)
+        ),
+        reverse=True,
+    )
+    if not scores:
+        return 0.0
+    if len(scores) == 1:
+        return float("inf")
+    return scores[0] - scores[1]
+
+
 def similarity_to_confidence(
     cosine_similarity: float,
     median: float = 0.3,
@@ -332,12 +366,14 @@ class ArcFaceRecognizer(FaceRecognizer):
     def __init__(self, config: FrigateConfig):
         super().__init__(config)
         self.mean_embs: dict[str, np.ndarray] = {}
+        self.sample_embs: dict[str, np.ndarray] = {}
         self.face_embedder: ArcfaceEmbedding = ArcfaceEmbedding(config.face_recognition)
         self.model_builder_queue: queue.Queue | None = None
         self.model_builder_failed = False
 
     def clear(self) -> None:
         self.mean_embs = {}
+        self.sample_embs = {}
 
     def run_build_task(self) -> None:
         model_builder_queue: queue.Queue = queue.Queue()
@@ -411,9 +447,14 @@ class ArcFaceRecognizer(FaceRecognizer):
         if not face_embeddings_map:
             return
 
+        mean_embs: dict[str, np.ndarray] = {}
+        sample_embs: dict[str, np.ndarray] = {}
         for name, embs in face_embeddings_map.items():
             if embs:
-                self.mean_embs[name] = build_class_mean(embs)
+                mean_embs[name] = build_class_mean(embs)
+                sample_embs[name] = normalize_face_samples(embs)
+        self.mean_embs = mean_embs
+        self.sample_embs = sample_embs
 
         logger.debug("Finished building ArcFace model")
 
@@ -450,5 +491,14 @@ class ArcFaceRecognizer(FaceRecognizer):
             if confidence > score:
                 score = confidence
                 label = name
+
+        min_sample_margin = self.config.face_recognition.min_sample_margin
+        if (
+            min_sample_margin > 0
+            and nearest_sample_margin(embedding, self.sample_embs) < min_sample_margin
+        ):
+            # A class mean can have a large lead despite individual references
+            # supporting multiple identities. Keep the attempt, but abstain.
+            return "unknown", 0.0
 
         return label, max(0, round(score - blur_reduction, 2))
