@@ -527,6 +527,10 @@
         {
           "sha": "a7c636a057993bf5d6c101b4e7bb494946f75955",
           "patch_id": "c3e3b70fea6ef71e168bf5420d1985b2162f5958"
+        },
+        {
+          "sha": "b9ea89d861b52eb099258f5a05d50c48b28dcd8d",
+          "patch_id": "48bfa349438481ace7841512a13c560ac0da3d89"
         }
       ],
       "disposition": "upstreamable",
