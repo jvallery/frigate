@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from frigate.events.audio import AudioEventMaintainer
+from frigate.events.audio import AudioEventMaintainer, AudioProcessor
 
 
 class CountingMetrics(dict):
@@ -87,6 +87,52 @@ class TestAudioMetrics(unittest.TestCase):
         self.assertEqual(old.audio_rms.value, 0)
         self.assertEqual(replacement.audio_rms.value, 1000)
         self.assertEqual(shared.lookups, 2)
+
+    def test_runtime_add_retries_until_metrics_are_available(self):
+        shared = {}
+        camera = SimpleNamespace(
+            name="sample",
+            enabled=True,
+            enabled_in_config=True,
+            audio=SimpleNamespace(enabled=True),
+            audio_transcription=SimpleNamespace(enabled=False),
+            ffmpeg=SimpleNamespace(inputs=[SimpleNamespace(roles=["audio"])]),
+        )
+        proc = AudioProcessor.__new__(AudioProcessor)
+        proc._closed = False
+        proc._popen = None
+        proc.config = SimpleNamespace(logger={}, cameras={"sample": camera})
+        proc.camera_metrics = shared
+        proc.pre_run_setup = Mock()
+        proc.logger = Mock()
+        thread = Mock()
+        thread.is_alive.return_value = False
+        polls = 0
+
+        def wait(timeout):
+            nonlocal polls
+            polls += 1
+            if polls == 1:
+                shared["sample"] = metrics()
+                return False
+            return True
+
+        proc.stop_event = SimpleNamespace(wait=wait)
+
+        def spawn(*args):
+            shared[camera.name]  # raises on the initial, out-of-order add
+            return thread
+
+        with (
+            patch("frigate.events.audio.CameraConfigUpdateSubscriber"),
+            patch(
+                "frigate.events.audio.AudioEventMaintainer", side_effect=spawn
+            ) as factory,
+        ):
+            proc.run()
+        self.assertEqual(factory.call_count, 2)
+        thread.start.assert_called_once()
+        self.assertEqual(proc.audio_threads, {"sample": thread})
 
     def test_disabled_audio_does_not_write_or_publish(self):
         counters = metrics()

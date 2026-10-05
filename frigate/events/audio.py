@@ -145,13 +145,21 @@ class AudioProcessor(FrigateProcess):
             # ffmpeg update may not have arrived yet; wait for next poll
             if not any("audio" in i.roles for i in camera.ffmpeg.inputs):
                 return
-            thread = AudioEventMaintainer(
-                camera,
-                self.config,
-                self.camera_metrics,
-                self.transcription_model_runner,
-                self.stop_event,  # type: ignore[arg-type]
-            )
+            try:
+                thread = AudioEventMaintainer(
+                    camera,
+                    self.config,
+                    self.camera_metrics,
+                    self.transcription_model_runner,
+                    self.stop_event,  # type: ignore[arg-type]
+                )
+            except KeyError as error:
+                # CameraMaintainer can receive a runtime add after this process.
+                # Only the missing camera bundle is retryable; preserve other errors.
+                if error.args != (name,):
+                    raise
+                self.logger.debug("Waiting for camera metrics before starting audio")
+                return
             self.audio_threads[name] = thread
             thread.start()
             self.logger.info(f"Audio maintainer started for {name}")
