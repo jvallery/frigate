@@ -409,6 +409,38 @@
         "pull_request": null
       },
       "retirement_condition": "Retire when upstream resolves semantic candidates to exact review object IDs with one archive pass and equivalent camera authorization, duplicate and ended-object membership coverage."
+    },
+    {
+      "id": "VLY-FRIGATE-013",
+      "concern": "preview_cache_restart_recovery",
+      "title": "Flat and loss-preserving preview cache recovery",
+      "owner": "jvallery",
+      "status": "candidate",
+      "upstream_base_sha": "9d0d8a99bb0d51c66366bac54a67538b172abd70",
+      "local_commits": [
+        {
+          "sha": "92be34e31d9f3584021a0e9a99fbce8bca1e9ffd",
+          "patch_id": "fea73a407ffd2e7aafec0b4050768ac216085135"
+        }
+      ],
+      "disposition": "upstreamable",
+      "affected_files": [
+        "frigate/output/output.py",
+        "frigate/output/preview_recovery.py",
+        "frigate/test/test_preview_recovery.py"
+      ],
+      "tests": [
+        "frigate/test/test_preview_recovery.py"
+      ],
+      "first_release": "v0.18.0-vallery.20261005.2",
+      "migration_class": "none",
+      "rollback_class": "code_only_image_rollback_safe",
+      "upstream": {
+        "issue": null,
+        "discussion": null,
+        "pull_request": null
+      },
+      "retirement_condition": "Retire when upstream recovers into existing preview directories without nesting and preserves conflicting frames and source data on interrupted copies."
     }
   ]
 }
