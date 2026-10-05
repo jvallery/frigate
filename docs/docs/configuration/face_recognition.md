@@ -144,6 +144,10 @@ face_recognition:
 </TabItem>
 </ConfigTabs>
 
+The sample lead is measured for the selected centroid identity against its best
+competing identity. A competitor with a stronger sample causes abstention; ties
+between losing identities do not reject a clear selected identity.
+
 The optional `min_sample_margin` guard supplements the recognition threshold for
 ArcFace (`model_size: large`). A class-mean confidence can be high even when
 individual training samples from different identities closely match a partial or

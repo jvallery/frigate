@@ -200,27 +200,27 @@ def normalize_face_samples(embs: list[np.ndarray]) -> np.ndarray:
 
 
 def nearest_sample_margin(
-    embedding: np.ndarray, normalized_samples: dict[str, np.ndarray]
+    embedding: np.ndarray,
+    normalized_samples: dict[str, np.ndarray],
+    selected_identity: str,
 ) -> float:
-    """Compare the best reference sample from each identity, rather than centroids."""
+    """Return the selected identity's signed sample lead over its best competitor."""
     norm = np.linalg.norm(embedding)
     if not np.isfinite(norm) or norm <= 0:
         return 0.0
 
     query = embedding / norm
-    scores = sorted(
-        (
-            float(np.max(np.einsum("ij,j->i", samples, query)))
-            for samples in normalized_samples.values()
-            if len(samples)
-        ),
-        reverse=True,
-    )
-    if not scores:
+    scores = {
+        name: float(np.max(np.einsum("ij,j->i", samples, query)))
+        for name, samples in normalized_samples.items()
+        if len(samples)
+    }
+    if selected_identity not in scores:
         return 0.0
-    if len(scores) == 1:
+    competitors = [score for name, score in scores.items() if name != selected_identity]
+    if not competitors:
         return float("inf")
-    return scores[0] - scores[1]
+    return scores[selected_identity] - max(competitors)
 
 
 def similarity_to_confidence(
@@ -495,7 +495,8 @@ class ArcFaceRecognizer(FaceRecognizer):
         min_sample_margin = self.config.face_recognition.min_sample_margin
         if (
             min_sample_margin > 0
-            and nearest_sample_margin(embedding, self.sample_embs) < min_sample_margin
+            and nearest_sample_margin(embedding, self.sample_embs, label)
+            < min_sample_margin
         ):
             # A class mean can have a large lead despite individual references
             # supporting multiple identities. Keep the attempt, but abstain.

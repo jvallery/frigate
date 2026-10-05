@@ -97,17 +97,39 @@ class TestFaceSampleMargin(unittest.TestCase):
 
     def test_margin_handles_unusable_queries_missing_references_and_one_identity(self):
         rec = self.recognizer()
-        self.assertEqual(nearest_sample_margin(np.zeros(2), rec.sample_embs), 0)
         self.assertEqual(
-            nearest_sample_margin(np.array([np.nan, 1]), rec.sample_embs), 0
+            nearest_sample_margin(np.zeros(2), rec.sample_embs, "alpha"), 0
         )
-        self.assertEqual(nearest_sample_margin(np.array([1.0, 0]), {}), 0)
+        self.assertEqual(
+            nearest_sample_margin(np.array([np.nan, 1]), rec.sample_embs, "alpha"), 0
+        )
+        self.assertEqual(nearest_sample_margin(np.array([1.0, 0]), {}, "alpha"), 0)
         self.assertEqual(
             nearest_sample_margin(
-                np.array([1.0, 0]), {"alpha": rec.sample_embs["alpha"]}
+                np.array([1.0, 0]), {"alpha": rec.sample_embs["alpha"]}, "alpha"
             ),
             float("inf"),
         )
+
+    def test_competitor_winning_samples_rejects_the_centroid_winner(self):
+        rec = self.recognizer(ambiguous=False)
+        rec.sample_embs["alpha"] = normalize_face_samples([np.array([0.6, 0.8])])
+        rec.sample_embs["beta"] = normalize_face_samples([np.array([1.0, 0.0])])
+        self.assertLess(
+            nearest_sample_margin(np.array([1.0, 0]), rec.sample_embs, "alpha"), 0
+        )
+        self.assertEqual(rec.classify(self.image()), ("unknown", 0.0))
+
+    def test_tied_losing_identities_do_not_reject_a_clear_selected_winner(self):
+        rec = self.recognizer(ambiguous=False)
+        rec.mean_embs["gamma"] = np.array([-1.0, 0.0])
+        rec.sample_embs["gamma"] = normalize_face_samples([np.array([0.0, -1.0])])
+        self.assertEqual(rec.classify(self.image())[0], "alpha")
+
+    def test_missing_selected_identity_references_abstains(self):
+        rec = self.recognizer(ambiguous=False)
+        del rec.sample_embs["alpha"]
+        self.assertEqual(rec.classify(self.image()), ("unknown", 0.0))
 
     def test_config_rejects_out_of_range_margins(self):
         for margin in [-0.01, 2.01]:
