@@ -48,6 +48,13 @@ class TestFaceCropArea(unittest.TestCase):
         proc.process_frame(self.object([0, 0, 40, 40]), self.frame())
         proc.recognizer.classify.assert_not_called()
 
+    def test_inclusive_box_area_does_not_hide_an_undersized_crop(self):
+        proc = self.processor(True)
+        proc._FaceRealTimeProcessor__detect_face.return_value = (0, 0, 60, 81)
+        # Inclusive box area is 61*82 = 5002; actual pixels are 60*81 = 4860.
+        proc.process_frame(self.object([0, 0, 120, 120]), self.frame())
+        proc.recognizer.classify.assert_not_called()
+
     def test_large_manual_crop_reaches_recognition(self):
         proc = self.processor(True)
         proc.process_frame(self.object([0, 0, 120, 120]), self.frame())
