@@ -293,6 +293,15 @@ class FaceRealTimeProcessor(RealTimeProcessorApi):
             logger.debug(f"Empty face crop for {id}")
             return
 
+        # A detector box may extend beyond the person or image boundary. The
+        # pixels actually available for recognition must satisfy the quality floor.
+        if (
+            face_frame.shape[0] * face_frame.shape[1]
+            < self.config.cameras[camera].face_recognition.min_area
+        ):
+            logger.debug("Ignoring face crop below min_area after clipping")
+            return
+
         res = self.recognizer.classify(face_frame)
 
         if not res:
