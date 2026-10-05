@@ -78,6 +78,26 @@ class TestFaceCropArea(unittest.TestCase):
             proc.recognizer.classify.call_args.args[0].shape[:2], (100, 50)
         )
 
+    def test_missing_attribute_keeps_manual_detection_available(self):
+        proc = self.processor(False)
+        proc.process_frame(self.object([0, 0, 120, 120]), self.frame())
+        proc._FaceRealTimeProcessor__detect_face.assert_called_once()
+        proc.recognizer.classify.assert_called_once()
+
+    def test_other_attributes_do_not_disable_manual_face_detection(self):
+        proc = self.processor(False)
+        attrs = [{"label": "amazon", "score": 0.9, "box": [0, 0, 100, 100]}]
+        proc.process_frame(self.object([0, 0, 120, 120], attrs), self.frame())
+        proc._FaceRealTimeProcessor__detect_face.assert_called_once()
+        proc.recognizer.classify.assert_called_once()
+
+    def test_present_face_attribute_does_not_run_manual_detection(self):
+        proc = self.processor(False)
+        attrs = [{"label": "face", "score": 0.9, "box": [0, 0, 100, 100]}]
+        proc.process_frame(self.object([0, 0, 120, 120], attrs), self.frame())
+        proc._FaceRealTimeProcessor__detect_face.assert_not_called()
+        proc.recognizer.classify.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -222,7 +222,12 @@ class FaceRealTimeProcessor(RealTimeProcessorApi):
 
         face: dict[str, Any] | None = None
 
-        if self.requires_face_detection:
+        # A face label tracked elsewhere must not disable YuNet on this camera.
+        # Also retain a fallback when the object detector misses a face attribute.
+        if self.requires_face_detection or not any(
+            attr.get("label") == "face"
+            for attr in obj_data.get("current_attributes", [])
+        ):
             logger.debug("Running manual face detection.")
             person_box = obj_data.get("box")
 
