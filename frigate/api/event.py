@@ -54,6 +54,7 @@ from frigate.api.defs.response.event_response import (
 from frigate.api.defs.response.generic_response import GenericResponse
 from frigate.api.defs.tags import Tags
 from frigate.api.explore_query import query_explore_events
+from frigate.api.semantic_review_query import semantic_review_matches
 from frigate.comms.event_metadata_updater import EventMetadataTypeEnum
 from frigate.config.classification import ObjectClassificationType
 from frigate.const import CLIPS_DIR
@@ -508,7 +509,6 @@ def events_search(
         Event.top_score,
         Event.data,
         Event.plus_id,
-        ReviewSegment.thumb_path,
     ]
 
     if include_thumbnails:
@@ -739,11 +739,21 @@ def events_search(
     if not search_results:
         return JSONResponse(content=[])
 
-    # Fetch events in a single query
-    events_query = Event.select(*selected_columns).join(
-        ReviewSegment,
-        JOIN.LEFT_OUTER,
-        on=(fn.json_extract(ReviewSegment.data, "$.detections").contains(Event.id)),
+    # Read review JSON once for the bounded semantic candidates. Resolve exact
+    # object membership, including historical references outside event lifetime.
+    review_matches = semantic_review_matches(ReviewSegment, list(search_results))
+    selected_columns.append(review_matches.c.thumb_path)
+    events_query = (
+        Event.select(*selected_columns)
+        .join(
+            review_matches,
+            JOIN.LEFT_OUTER,
+            on=(
+                (review_matches.c.event_id == Event.id)
+                & (review_matches.c.camera == Event.camera)
+            ),
+        )
+        .with_cte(review_matches)
     )
 
     # Apply filters, if any
