@@ -566,6 +566,10 @@
         {
           "sha": "4901c6bb7c9fe0793550e4005330f1352a5145fa",
           "patch_id": "07deec55fa7cd7151633cc844932e50a6c27435a"
+        },
+        {
+          "sha": "d79a73c2b2ea5e9d5c9ee9f7693baf623be10b47",
+          "patch_id": "8a6a7a5f173705d9ecbfcf6aed3487a657f7bc81"
         }
       ],
       "disposition": "upstreamable",
