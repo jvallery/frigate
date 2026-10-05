@@ -226,7 +226,7 @@ class FaceRealTimeProcessor(RealTimeProcessorApi):
         # Also retain a fallback when the object detector misses a face attribute.
         if self.requires_face_detection or not any(
             attr.get("label") == "face"
-            for attr in obj_data.get("current_attributes", [])
+            for attr in (obj_data.get("current_attributes") or [])
         ):
             logger.debug("Running manual face detection.")
             person_box = obj_data.get("box")

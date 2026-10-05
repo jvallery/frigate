@@ -91,6 +91,14 @@ class TestFaceCropArea(unittest.TestCase):
         proc._FaceRealTimeProcessor__detect_face.assert_called_once()
         proc.recognizer.classify.assert_called_once()
 
+    def test_null_attributes_keep_manual_detection_available(self):
+        proc = self.processor(False)
+        obj = self.object([0, 0, 120, 120])
+        obj["current_attributes"] = None
+        proc.process_frame(obj, self.frame())
+        proc._FaceRealTimeProcessor__detect_face.assert_called_once()
+        proc.recognizer.classify.assert_called_once()
+
     def test_present_face_attribute_does_not_run_manual_detection(self):
         proc = self.processor(False)
         attrs = [{"label": "face", "score": 0.9, "box": [0, 0, 100, 100]}]
