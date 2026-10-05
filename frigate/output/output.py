@@ -32,6 +32,7 @@ from frigate.const import (
 from frigate.output.birdseye import Birdseye
 from frigate.output.camera import JsmpegCamera
 from frigate.output.preview import PreviewRecorder
+from frigate.output.preview_recovery import recover_preview_frames
 from frigate.output.ws_auth import ws_has_camera_access
 from frigate.util.image import SharedMemoryFrameManager, get_blank_yuv_frame
 from frigate.util.process import FrigateProcess
@@ -352,7 +353,7 @@ def move_preview_frames(loc: str) -> None:
         if not os.path.exists(src):
             return
 
-        shutil.move(src, dst)
+        recover_preview_frames(src, dst)
 
     except PermissionError:
         logger.error(
@@ -360,7 +361,7 @@ def move_preview_frames(loc: str) -> None:
             src,
             dst,
         )
-    except shutil.Error:
+    except (shutil.Error, OSError):
         logger.error(
             "Failed to move preview restart cache from %s to %s",
             src,
