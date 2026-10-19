@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-10-19 (Jason's decision, jvallery/frigate#57).** Production Frigate runs only the official upstream `ghcr.io/blakeblackshear/frigate` TensorRT image, pinned by digest in `jvallery/sentinel` (upstream-only policy). This fork is no longer a source, release or deployment path. All GitHub workflows were disabled before archiving, and its release images and patch ledger remain only as history. The parked `frigate-dev` workload (namespace `frigate-dev`, 0 replicas, no PVCs) is declared in `jvallery/agents` (`agent-fleet-local-dev-apps`: `frigate-local-dev` and its `frigate-dev-*` companions) and in `jvallery/network-infra` (`frigate-dev-network-policy`); removing those declarations is an agents and network-infra change, tracked on jvallery/frigate#57. Upstream contributions go directly to `blakeblackshear/frigate`.
+
 <p align="center">
   <img align="center" alt="logo" src="docs/static/img/branding/frigate.png">
 </p>
